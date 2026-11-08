@@ -1,0 +1,17 @@
+# 手机照片：单页或几页拍下来的题
+# 验证过的样本：photo_pipeline 的历史用例（jpg，一页一张）
+id: photo
+label: 手机照片（单页/几页）
+verified: true
+sample: photo_pipeline 的 jpg 用例
+route: scripts/photo_pipeline.py（光照归一化 → 去斜 → OCR → 切题 → 拼版）
+room: standard
+when:
+  kind: image
+expect:
+  题数: 由你给的题号范围决定，推断不出来
+accept: 斜切校正后四角都是白的、题号与你给的范围一致
+pitfalls:
+  - "照片里没有可靠的题号序列，切几道题只能靠你给范围（scope 必答），别猜"
+  - "155dpi 的手机照片印出来会被退回，186dpi 可接受。低于 170 就问一句要不要矢量重排"
+  - "多页照片要按文件名顺序拼，拍摄顺序 ≠ 书的顺序时先改名"

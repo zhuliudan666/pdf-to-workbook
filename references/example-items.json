@@ -1,0 +1,35 @@
+{
+ "title": "示例讲义 · 高等数学分册",
+ "subtitle": "第 4 讲 一元函数积分",
+ "items": [
+  {
+   "no": "4.1",
+   "kind": "fill",
+   "stem": "设 $f(x)=x^{2}+1$，则",
+   "disp": "$\\displaystyle \\int_{0}^{1} f(x)\\,\\mathrm{d}x=\\underline{\\qquad\\qquad}$"
+  },
+  {
+   "no": "4.2",
+   "kind": "fill",
+   "stem": "曲线 $y=x^{2}$ 在点 $(1,1)$ 处的切线斜率为",
+   "disp": "$k=\\underline{\\qquad\\qquad}$",
+   "uncertain": [
+    "「uncertain」是给转写环节留的字段：原图看不清、需要人眼复核时把疑点写进这个数组，做题本会带进校对单，不会静默丢掉"
+   ]
+  },
+  {
+   "no": "4.3",
+   "kind": "solve",
+   "stem": "计算定积分 $\\displaystyle \\int_{0}^{\\pi} x\\sin x\\,\\mathrm{d}x$。"
+  },
+  {
+   "no": "4.4",
+   "kind": "solve",
+   "stem": "设 $F(x)=\\displaystyle \\int_{0}^{x} \\mathrm{e}^{-t^{2}}\\,\\mathrm{d}t$，",
+   "subs": [
+    "(1) 求 $F'(x)$；",
+    "(2) 讨论 $F(x)$ 在 $[0,+\\infty)$ 上的单调性与有界性。"
+   ]
+  }
+ ]
+}
