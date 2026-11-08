@@ -65,6 +65,27 @@ pip install -r ~/.dsh/skills/pdf-to-workbook/requirements.txt
 > 本仓库是私有的，克隆前要先登录 GitHub（`gh auth login`，或用 GitHub Desktop 打开一次）。
 > 想让别人免登录安装，把仓库可见性改成 public。
 
+### 5. 也可以让 agent 自己装
+
+能。只要那个 agent 能跑命令、能写文件，把下面这段整个丢给它就行——不用你自己敲 shell：
+
+```text
+把这个仓库装成你的技能，装完自己验证一遍：
+https://github.com/zhuliudan666/pdf-to-workbook
+
+1. 放进你的用户级技能目录（WorkBuddy/CodeBuddy 是 ~/.workbuddy/skills/，
+   DeepSeek Harness 是 ~/.dsh/skills/，Claude Code 是 ~/.claude/skills/），
+   层级必须是 <技能目录>/pdf-to-workbook/SKILL.md，不要在里面再套一层同名目录
+2. 装依赖：pip install -r requirements.txt
+3. 自检：python scripts/intake.py --help 能打出用法就说明依赖齐了
+4. 告我装到哪个路径了、现在能不能用
+```
+
+它做完这四步就等于装好了。要是它只 clone 了没装依赖，你补一句「把 requirements.txt 装上」即可。
+
+> 前提是本仓库对它有读权限：私有仓库需要它手上已经有你的 GitHub 凭据
+> （桌面端登录过、或 `gh auth login` 过）。都没有的话，把仓库改成 public 最省事。
+
 ## 三句话
 
 ```
