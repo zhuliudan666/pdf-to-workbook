@@ -14,32 +14,56 @@
 
 ## 安装
 
-skill 就是「一个目录里放一个 `SKILL.md`」。把这个仓库放到 agent 的技能目录，重启后即可用。
+一句话：skill 就是「一个目录 + 里面一个 `SKILL.md`」。把整个仓库放进 agent 的技能目录就行。
 
-**WorkBuddy / CodeBuddy**（用户级，所有项目可见）：
+### 1. 先决定放哪儿
+
+| 范围 | 谁能用 | WorkBuddy / CodeBuddy | DeepSeek Harness（dsh） | Claude Code |
+| --- | --- | --- | --- | --- |
+| 用户级 | 本机所有项目 | `~/.workbuddy/skills/` | `~/.dsh/skills/`（也认 `~/.agents/skills/`） | `~/.claude/skills/` |
+| 项目级 | 只有这个项目 | `<项目>/.workbuddy/skills/` | `<项目>/.dsh/skills/`（也认 `<项目>/.agents/skills/`） | `<项目>/.claude/skills/` |
+
+dsh 会盯着这些目录，放进去即生效，**不用重启**；WorkBuddy 和 Claude Code 重启会话后可见。
+
+### 2. 放进去
+
+挑一行执行（以用户级为例）：
 
 ```bash
+# WorkBuddy / CodeBuddy
 git clone https://github.com/zhuliudan666/pdf-to-workbook.git ~/.workbuddy/skills/pdf-to-workbook
+
+# DeepSeek Harness
+git clone https://github.com/zhuliudan666/pdf-to-workbook.git ~/.dsh/skills/pdf-to-workbook
+
+# Claude Code
+git clone https://github.com/zhuliudan666/pdf-to-workbook.git ~/.claude/skills/pdf-to-workbook
 ```
 
-```powershell
-# Windows PowerShell
-git clone https://github.com/zhuliudan666/pdf-to-workbook.git "$env:USERPROFILE\.workbuddy\skills\pdf-to-workbook"
+Windows 的命令行里 `~/` 不管用，换成下面这行（把 `.dsh` 改成你要的目录）：
+
+```
+git clone https://github.com/zhuliudan666/pdf-to-workbook.git "%USERPROFILE%\.dsh\skills\pdf-to-workbook"
 ```
 
-只想在某个项目里用，就放到 `<项目根>/.workbuddy/skills/pdf-to-workbook`。
+**不装 git 也行**：仓库页右上角 `Code → Download ZIP`，解压出一个目录，丢进上表的任一位置。目录名随便改，但层级必须是 `skills/pdf-to-workbook/SKILL.md`——多套一层就认不出来。
 
-**Claude Code**：放 `~/.claude/skills/pdf-to-workbook`（个人）或 `<项目根>/.claude/skills/pdf-to-workbook`（项目）。
+### 3. 装依赖（只装一次）
 
-**不想用 git**：右上角 `Code → Download ZIP`，解压出一个目录，丢进上面任一位置。目录名可以改，但里面必须有 `SKILL.md`。
+```bash
+pip install -r ~/.dsh/skills/pdf-to-workbook/requirements.txt
+```
+
+只处理带文本层的 PDF 时，`rapidocr-onnxruntime` 和 `opencv-python` 可以不装（那是扫描件和手机拍照路线要的）。另外需要一个中文字体，见[依赖与字体](#依赖与字体)。
+
+### 4. 验证
+
+- **dsh**：输入 `/pdf-to-workbook`，回话说技能已加载就成了
+- **WorkBuddy / Claude Code**：问一句「pdf-to-workbook 这个技能现在能用吗」，或者直接说「把这本书做成做题本」
+- **没出现**：九成是目录多套了一层，检查有没有 `skills/pdf-to-workbook/pdf-to-workbook/SKILL.md` 这种结构
 
 > 本仓库是私有的，克隆前要先登录 GitHub（`gh auth login`，或用 GitHub Desktop 打开一次）。
-> 需要免登录分发的话，把仓库可见性改成 public。
-
-**验证装好了没**：问 agent「pdf-to-workbook 这个技能现在能用吗」，或直接说「把这本书做成做题本」。
-技能列表里没出现，多半是目录层级多了一层（`skills/pdf-to-workbook/pdf-to-workbook/SKILL.md` 这种）。
-
-装完还差一步依赖，见[依赖与字体](#依赖与字体)。
+> 想让别人免登录安装，把仓库可见性改成 public。
 
 ## 三句话
 
