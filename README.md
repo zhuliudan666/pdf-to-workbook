@@ -50,13 +50,29 @@ git clone https://github.com/zhuliudan666/pdf-to-workbook.git "%USERPROFILE%\.ds
 
 ### 3. 装依赖（只装一次）
 
+把 `<技能目录>` 换成你在第 1 步选的那个（例如 `~/.workbuddy/skills`）：
+
 ```bash
-pip install -r ~/.dsh/skills/pdf-to-workbook/requirements.txt
+python -m pip install -r <技能目录>/pdf-to-workbook/requirements.txt
 ```
+
+**用 `python -m pip` 而不是 `pip`**：Windows 上经常同时装着两个 Python，`pip` 和 `python`
+不是同一个，装完了 `import` 还是报 `ModuleNotFoundError`。`python -m pip` 保证装进当前这个解释器。
 
 只处理带文本层的 PDF 时，`rapidocr-onnxruntime` 和 `opencv-python` 可以不装（那是扫描件和手机拍照路线要的）。另外需要一个中文字体，见[依赖与字体](#依赖与字体)。
 
 ### 4. 验证
+
+```bash
+# 文本层路线要的四个：
+python -c "import pymupdf, yaml, numpy, PIL; print('文本层路线：依赖齐了')"
+
+# 扫描件 / 手机拍照另外还要这两个（不跑这两条路线可以跳过）：
+python -c "import cv2, rapidocr_onnxruntime; print('扫描件路线：依赖齐了')"
+```
+
+一条都不报错就说明装好了。报了 `ModuleNotFoundError` 但 pip 说已安装，就是第 3 步那两个
+`pip` / `python` 不是同一个——回头用 `python -m pip` 重装。
 
 - **dsh**：输入 `/pdf-to-workbook`，回话说技能已加载就成了
 - **WorkBuddy / Claude Code**：问一句「pdf-to-workbook 这个技能现在能用吗」，或者直接说「把这本书做成做题本」
@@ -77,7 +93,8 @@ https://github.com/zhuliudan666/pdf-to-workbook
    DeepSeek Harness 是 ~/.dsh/skills/，Claude Code 是 ~/.claude/skills/），
    层级必须是 <技能目录>/pdf-to-workbook/SKILL.md，不要在里面再套一层同名目录
 2. 装依赖：pip install -r requirements.txt
-3. 自检：python scripts/intake.py --help 能打出用法就说明依赖齐了
+3. 自检：python -c "import pymupdf, yaml, numpy, PIL" 不报错就算齐了；再跑
+   python scripts/intake.py --help 能打出用法，说明脚本本身也起得来
 4. 告我装到哪个路径了、现在能不能用
 ```
 
@@ -123,17 +140,60 @@ flowchart LR
 
 ### 不想让 agent 代劳
 
-按 `SKILL.md` 开头的「工作流程」手敲两条命令，跟对话里做的是同一件事：
+按 `SKILL.md` 开头的「工作流程」手敲。`build.py` 一条就跑完八步（体检→切题→裁图→
+质检→结构校验→校对单→拼版→验收），但**它只保证「切得下去」，不保证「没切进内容」**——
+所以后面还要补一次自检和诊断：
 
 ```bash
 pip install -r requirements.txt
 cd /path/to/pdf-to-workbook && SKILL="$PWD" && PY=python
 
+# ① 出计划（问你 2~3 句，也可以 --say 直接把原话传进去）
 "$PY" "$SKILL/scripts/intake.py" 书.pdf --out 输出目录 --say "用户原话"
+
+# ② 一键全流程
 "$PY" "$SKILL/scripts/build.py"  书.pdf 输出目录/intake.yaml 输出目录
+
+# ③ 补一次自检：查「有没有切进内容」，build 兜不住这一层
+"$PY" "$SKILL/scripts/selfcheck.py" 书.pdf 输出目录 输出目录/intake.yaml --json 输出目录/selfcheck.json
+"$PY" "$SKILL/scripts/diagnose.py" --check 输出目录/selfcheck.json --questions 输出目录/questions.json
 ```
 
-产物是 `输出目录/做题本.pdf`（打印用）和 `输出目录/校对单.pdf`（检查用）。
+产物：
+
+| 文件 | 用途 |
+| --- | --- |
+| `输出目录/做题本.pdf` | 打印用 |
+| `输出目录/校对单.pdf` | 五分钟翻一遍：红框必看、黄框快扫、灰框查缺题 |
+| `输出目录/联系表.png` | 全部题图的缩略图，一眼看切点齐不齐 |
+| `输出目录/selfcheck.json` | 第 ③ 步的自检结果，诊断读它 |
+
+`diagnose.py` 说『全干净』才算收工。它报红时按 `SKILL.md` 的「症状 → 参数」表改，
+不要凭感觉调阈值。
+
+## 第一本慢，同类的第二本快
+
+**慢的不是跑，是调参。**
+
+跑本身按页数线性耗时：切题、裁图、拼版，扫描件再加 OCR（约 5 秒/页）。OCR 缓存是按书
+存的（缓存名带页码），换书不共享——所以第二本该等多久还是等多久，这部分不会变快。
+
+省下来的是**摸配置**：切点压没压准、页眉水印要不要剔、多套合订怎么分章、每页放几道。
+这些沉淀在两个地方：
+
+| 机制 | 作用 |
+| --- | --- |
+| `profiles/` 六套预案 | `classify.py` 认出素材类型就自动套配置，不用逐项调 |
+| `tools/learn.py` | 把这次跑通的配置固化成新预案，下次同类书直接命中 |
+
+前提是**版式同源**——同出版社、同系列、同一批扫描件。第二本往往一次就过；
+换一家出版社，题号写法、页眉位置、栏数都变，预案不命中，等于重新来一遍。
+
+所以这套东西的成本随「书型」递减，不随「本数」递减。
+
+> 心理预期：第一次做某一类书，留出一两轮调参的时间（改的是配置，不是代码）；
+> 同类第二本开始，多数能一轮到底。`profiles/` 里目前 `handout`（讲义课后题）标着
+> `verified: false`，第一次拿真讲义进来要格外看一眼校对单。
 
 ## 适合什么素材
 
