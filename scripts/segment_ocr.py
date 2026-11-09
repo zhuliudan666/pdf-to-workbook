@@ -21,6 +21,9 @@ import common
 import ocr
 
 SEC_RE = re.compile(r"^[一二三四五六七八九]\s*[、.．]\s*(选择题|填空题|解答题|证明题)")
+# 同一条标题被 OCR 拆成「二、」+「填空题：11～16 小题」两框时用这条：
+# 中间那 0–4 个字符是「、」和被认错的噪声，不能要求它是空白。
+SEC_LOOSE = re.compile(r"[一二三四五六七八九][、.．]?.{0,4}?(选择题|填空题|解答题|证明题)")
 # 章级横幅（不是题、也不分题型，只是排版上的分隔），切题时要整块剔掉
 DIVIDER_RE = re.compile(r"命题点|^[※×*]\s*\S")
 # 「第一部分 高等数学」「※命题点 4 中值定理及其应用」——做题本的章节层级靠这两行建
@@ -125,6 +128,22 @@ def parse_page(pno: int, lines: list[dict], content_top: float, pats: list | Non
         if y < content_top:
             continue
         sec = SEC_RE.match(line["text"])
+        if not sec and len(line["text"]) <= 6 and re.match(r"^\s*[一二三四五六七八九十]", line["text"]):
+            # 条带只有 135pt 宽时，OCR 会把「二、填空题：11～16 小题…」拆成两框：
+            # 「二、」和「填空题：11～16 小题」，而且左边框的末尾常多带一个噪声字符
+            # （实测成了「二、<U+FFFD>」）。单看任一框都命不中 SEC_RE，这一节的题
+            # 就全被算进上一类——实测某模拟卷 6 道填空题按选择题排，答题区从 33mm
+            # 缩到 18mm，写不下，而每张题图单看都是好的。
+            # 只在同一行（y 差 ≤9pt）、在右侧的兄弟行里拼一次，不跨行：
+            # 跨行拼会把上一行的题号接到下一行的「填空题」上。
+            for other in lines:
+                if other is line or abs(other["box"][1] - line["box"][1]) > 9:
+                    continue
+                if other["box"][0] < line["box"][0] + 6:
+                    continue
+                sec = SEC_LOOSE.search(line["text"].strip() + other["text"].strip())
+                if sec:
+                    break
         if sec:
             sections.append((pno, y, line["box"][3], sec.group(1)))
             continue
