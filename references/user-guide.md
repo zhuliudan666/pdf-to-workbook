@@ -194,6 +194,8 @@ answer_gap_floor_by_section: {选择题: 14, 填空题: 26, 解答题: 32, 证�
 answer_gap_cap_by_section:   {选择题: 40, 填空题: 60, 解答题: 130, 证明题: 130}
 min_scale: 0.8                  # 题图最多缩到 80%
 gap_style: blank                # blank | line | dots
+text_layer: true                # 成品可搜索（题图上盖不可见文字）
+text_layer_source: auto         # auto | native | ocr | off；扫描件走 ocr 要多跑一遍整页 OCR
 paper: {size: A4, dpi: 300, margin_left: 66}    # 双面装订 margin_left 改 81
 header: {book: "", title: "", show_source_page: true}
 ocr: {strip_x0: 24}             # 要和 content_box: [24, 548] 一起改

@@ -20,6 +20,7 @@ layout.py 用它在题图上面盖一层不可见文字，PDF 就能搜索/选�
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from PIL import Image, ImageFilter
 
 sys.path.insert(0, str(Path(__file__).parent))
 import common
+import ocr
 
 STACK_GAP = 24          # 跨页题两段之间的间距（像素）
 
@@ -196,14 +198,56 @@ def ink_pixels(img: Image.Image, thresh: int = 246) -> int:
     return sum(mask.histogram()[1:])
 
 
-def page_ocr_lines(out: Path, page_no: int) -> list[dict]:
-    f = out / "ocr" / f"page_{page_no:03d}.json"
-    if not f.exists():
-        return []
-    try:
-        return json.loads(f.read_text(encoding="utf-8")).get("lines", [])
-    except Exception:
-        return []
+def native_lines(page) -> list[dict]:
+    """原生文字层按行取，坐标就是 PDF 点——和 OCR 的 box 同一套坐标系。
+
+    为什么按 `dict` 而不是 `words`：`words` 是按空格切的词，中文既没有空格，
+    切出来全是单字，贴进文字层后复制是「单 调 有 界」；`dict` 给的是行，
+    一行一个字符串，复制出来才是一句话。
+    """
+    lines: list[dict] = []
+    for blk in page.get_text("dict").get("blocks", []):
+        if blk.get("type") != 0:          # 1 = 图片块，没有文字
+            continue
+        for ln in blk.get("lines", []):
+            text = "".join(s.get("text", "") for s in ln.get("spans", []))
+            text = " ".join(text.split())
+            if not text:
+                continue
+            x0, y0, x1, y1 = ln["bbox"]
+            lines.append({"text": text, "box": [x0, y0, x1, y1], "score": 1.0})
+    # 和 ocr._run 的排序一致：先按行（6pt 一带）再按 x，复制出来的题干才读得通
+    lines.sort(key=lambda r: (round(r["box"][1] / 6), r["box"][0]))
+    return lines
+
+
+def text_source(doc, cfg: dict) -> str:
+    """这本题材的文字层从哪儿来：native / ocr / off。
+
+    `text_layer: false` 一律 off。否则抽样 6 页看有没有成行的文字：
+    电子版每页几百字，扫描件是 0；扫描件后面加过 OCR 层的也走 native——
+    那一层的坐标是准的，只是字可能认错，但比再跑一遍整页 OCR 省十分钟。
+    """
+    if not cfg.get("text_layer", True):
+        return "off"
+    forced = (cfg.get("text_layer_source") or "auto").lower()
+    if forced in ("native", "ocr", "off"):
+        return forced
+    n = min(doc.page_count, 6)
+    if not n:
+        return "off"
+    chars = sum(len(doc[i].get_text().strip()) for i in range(n))
+    return "native" if chars / n >= 120 else "ocr"
+
+
+def page_lines(doc, pdf: str, out: Path, page_no: int, src: str, cfg: dict) -> list[dict]:
+    """一页的行框，单位都是 PDF 点。"""
+    if src == "native":
+        return native_lines(doc[page_no - 1])
+    if src == "ocr":
+        dpi = int((cfg.get("ocr") or {}).get("page_dpi") or 200)
+        return ocr.ensure(pdf, page_no, out, dpi)["lines"]
+    return []
 
 
 def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> list[dict]:
@@ -219,6 +263,7 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> l
     mode = img_cfg.get("mode", "bitonal")
     threshold = int(img_cfg.get("threshold", 200))
     want_text = bool(cfg.get("text_layer", True))
+    src = text_source(doc, cfg) if want_text else "off"
 
     staged: list[dict] = []
     for q in questions:
@@ -292,7 +337,8 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> l
             canvas = padded
         canvas_w, canvas_h = canvas.width, canvas.height
 
-        q["texts"] = collect_texts(out, metas, canvas_w, canvas_h, dpi) if want_text else []
+        q["texts"] = (collect_texts(doc, pdf, out, metas, canvas_w, canvas_h, dpi, src, cfg)
+                      if src != "off" else [])
         final = to_bitonal(canvas, threshold) if mode == "bitonal" else canvas
         name = f"{q['seq']:03d}_{common.safe_name(q['id'])}.png"
         final.save(crops_dir / name, optimize=True)
@@ -303,14 +349,29 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> l
         json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     total = sum(Path(q["image"]).stat().st_size for q in questions)
+    # 文字层要报出来：它决定成品能不能搜，而"看起来跑完了"和"真能搜"差得远。
+    covered = sum(1 for q in questions if q.get("texts"))
+    tl = {("native"): "原书文字层", "ocr": "整页 OCR", "off": "不做"}.get(src, src)
     print(f"裁切完成：{len(questions)} 题 -> {crops_dir}（{total / 1e6:.2f}MB，模式 {mode}）")
+    print(f"文字层：{tl}，{covered}/{len(questions)} 题有可搜索文字"
+          + ("　⚠ 一题都没有，成品将搜不到题干" if questions and not covered else ""))
     return questions
 
 
-def collect_texts(out: Path, metas: list[dict], cw: int, ch: int, dpi: int) -> list[dict]:
-    """把整页 OCR 的行框映射到题图坐标系，归一化成 0-1，供 layout 盖不可见文字层。"""
+def collect_texts(doc, pdf: str, out: Path, metas: list[dict], cw: int, ch: int,
+                  dpi: int, src: str = "native", cfg: dict | None = None) -> list[dict]:
+    """把整页的行框映射到题图坐标系，归一化成 0-1，供 layout 盖不可见文字层。
+
+    两个来源：`native` 读原书自己的文字层（坐标和字都是真的），`ocr` 是整页识别
+    （扫描件没有文字层，只能认）。以前只认 OCR，而且读的是 `ocr/page_NNN.json`
+    ——那个文件由 `ocr.ensure()` 写，可全仓没人调用，于是 `texts` 恒为空、
+    成品一本书都搜不到字（220 页的余丙森本实测 `get_text()` 每页只剩页眉那几十字）。
+    """
+    cfg = cfg or {}
+    pats = cfg.get("ignore_patterns") or []
     scale = dpi / 72.0
     items: list[dict] = []
+    cache: dict[int, list[dict]] = {}
     for meta in metas:
         p = meta["part"]
         x0, y0, x1, y1 = p["rect"]
@@ -318,15 +379,25 @@ def collect_texts(out: Path, metas: list[dict], cw: int, ch: int, dpi: int) -> l
         # 横向裁过以后，题图左沿在原始像素里的位置是 meta["left"]，
         # 不减这一项，贴在题图上的文字层会整体右移到版心里去。
         xc = x0 + float(meta.get("left") or 0) / scale
-        for ln in page_ocr_lines(out, p["page"] + 1):
+        pno = p["page"] + 1
+        if pno not in cache:
+            cache[pno] = page_lines(doc, pdf, out, pno, src, cfg)
+        for ln in cache[pno]:
             bx0, by0, bx1, by1 = ln["box"]
             text = (ln.get("text") or "").strip()
+            text = " ".join(text.split())
             if not text:
                 continue
-            # 只留真正是中文叙述的行。OCR 对公式的输出是"ln(1+α)"这种残渣，
-            # 留在文字层里既不improve搜索，还会把整段复制文本弄脏。
-            if sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff") < 2:
+            # 水印/引流词不能进文字层：搜「公众号」会跳得到处都是
+            if any(re.search(pat, text) for pat in pats):
                 continue
+            if src == "ocr":
+                # OCR 对公式的输出是"ln(1+α)"这种残渣，留在文字层里既搜不到，
+                # 还会把整段复制文本弄脏。原生文字层不用这一条——那不是猜的。
+                if sum(1 for c in text if "\u4e00" <= c <= "\u9fff") < 2:
+                    continue
+            elif not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", text):
+                continue                      # 纯符号/纯标点
             cy, cx = (by0 + by1) / 2, (bx0 + bx1) / 2
             if not (y0 - 1 <= cy <= y1 + 1 and x0 - 2 <= cx <= x1 + 2):
                 continue

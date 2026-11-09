@@ -53,7 +53,11 @@ DEFAULTS = {
     "min_scale": 0.8,
     "gap_style": "blank",
     "image": {"mode": "bitonal", "threshold": 200},
-    "text_layer": True,
+    "text_layer": True,              # 成品要不要盖可搜索的隐形文字
+    # 文字从哪来：auto = 原书有文字层就用它，没有就跑整页 OCR；
+    # native/ocr 可以硬指定，off 等于 text_layer: false。
+    # 扫描件跑整页 OCR 实测 2–3.5 秒/页（220 页约 10 分钟），值得单独留个开关。
+    "text_layer_source": "auto",
     "paper": {                       # 版心边距，单位 pt（不是毫米；毫米字段都带 _mm 后缀）
         "size": "A4",
         "margin_top": 58,

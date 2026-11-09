@@ -76,6 +76,18 @@ min_scale: 0.8
 # dots 会多出很多矢量圆：88 题大约多 0.5–1MB，不介意体积再用
 gap_style: blank
 
+# 可搜索文字层：在题图上盖一层不可见文字（render_mode=3），
+# 成品能搜「单调有界」、能选中复制题干，而眼睛看到的仍是原书字形。
+# 关掉它不会影响排版，只是成品变成纯图片——想扫描后存档就关。
+text_layer: true
+# 文字从哪来：
+#   auto  —— 原书有文字层就用它（坐标和字都是真的），没有才跑整页 OCR
+#   native / ocr —— 硬指定。ocr 用在「有文字层但不可信」的书上
+#   off   —— 等于 text_layer: false
+# 注意扫描件跑整页 OCR 约 2–3.5 秒/页：220 页的书多花 10 分钟，这是唯一为
+# 可搜索付出的代价，排版本身不受影响。
+text_layer_source: auto
+
 paper:
   size: A4
   margin_top: 58

@@ -469,6 +469,7 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None, out_
 
     toc: list[list] = []
     stats = {"short": [], "shrink": [], "tight": [], "cap": [], "balanced": []}
+    gap_log: list[dict] = []
     scale_min = 1.0
     total_q = 0
 
@@ -540,6 +541,15 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None, out_
         gaps_for_page = [floor_of(s) for s in secs]
         caps = [cap_of(s) for s in secs]
         hs2, gaps, mode, sc = page_gaps(hs, gaps_for_page, caps, flow_bottom - y, q_gap, min_scale)
+        # 记下这页实际给出的答题区（毫米）。验收要拿它跟目标值对账——
+        # 以前没人记，于是「3 道/页但答题区只有 22mm」能一路跑到交付，谁也没报。
+        gap_log.append({
+            "page": pg.number + 1,
+            "sections": sorted(set(secs)),
+            "count": len(items),
+            "gaps_mm": [round(g / 72 * 25.4, 1) for g in gaps],
+            "mode": mode,
+        })
         scale_min = min(scale_min, sc)
         target = int(cfg.get("page_quota_mixed", 3) or 3) if len(set(secs)) > 1 else (quota_of(cfg, secs[0]) or 0)
         if target and len(items) < target:
@@ -606,6 +616,8 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None, out_
     except Exception:
         pass
     doc.save(target_path, garbage=4, deflate=True, clean=True)
+    (Path(out) / "layout.json").write_text(
+        json.dumps(gap_log, ensure_ascii=False, indent=1), encoding="utf-8")
     doc.close()
 
     mb = target_path.stat().st_size / 1e6

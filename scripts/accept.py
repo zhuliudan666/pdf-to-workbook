@@ -203,8 +203,73 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> d
         problems.append({"kind": "overflow", "detail":
                          "%d 页最后一题的图底压到了可写位置以下" % len(over),
                          "pages": [p for p, _ in over[:12]]})
+
+    # ---- 答题区是否达到本档目标 ----
+    # 排版器把「这页放了几道、每题给了多少毫米」写在 layout.json 里。以前没人对账，
+    # 于是「3 道/页但答题区只有 22mm」能一路跑到交付——每张题图单看都是好的，
+    # 只有拿尺子量才发现写不下四行推导。
+    lay = Path(out_dir) / "layout.json" if out_dir else None
+    if lay is not None and lay.exists():
+        try:
+            log = json.loads(lay.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 —— 记账坏了不该让验收崩掉
+            log = []
+        floors = cfg.get("answer_gap_floor_by_section") or {}
+        fallback = float(cfg.get("answer_gap_floor_mm", 30))
+        thin = []
+        for rec in log:
+            sec = (rec.get("sections") or [""])[0]
+            want = float(floors.get(sec, fallback))
+            for g in rec.get("gaps_mm") or []:
+                if g + 2.0 < want:
+                    thin.append((rec["page"], sec, g, want))
+        if thin:
+            problems.append({"kind": "answer_gap", "detail":
+                             "%d 处答题区低于本档目标（最窄 p%d %s %.0fmm，目标 %.0fmm）"
+                             % (len(thin), thin[0][0], thin[0][1], thin[0][2], thin[0][3]),
+                             "pages": sorted({p for p, *_ in thin})[:12]})
     gaps_sorted = sorted(gaps)
     tails_sorted = sorted(tails)
+
+    # ---- 6. 文字层：成品到底能不能搜 ----
+    # 这条闸是补出来的：`layout.overlay_text` 一直有，但 `crop` 读的是
+    # `ocr/page_NNN.json`，那个文件由 `ocr.ensure()` 写、全仓没人调用——
+    # 于是 220 页的成品 `get_text()` 每页只剩页眉几十字，一本书都搜不到，
+    # 而前面五条检查全是绿的。所以这里分两步定性：裁切时有没有存文字层，
+    # 存了有没有真的印到成品上。
+    qfile = Path(out_dir) / "questions.json" if out_dir else None
+    if cfg.get("text_layer", True) and qfile is not None and qfile.exists():
+        try:
+            qs = json.loads(qfile.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            qs = []
+        with_text = [q for q in qs if q.get("texts")]
+        if not with_text:
+            problems.append({"kind": "text_layer_missing", "detail":
+                             "%d 题里没有一条文字层记录，成品将搜不到题干" % len(qs),
+                             "pages": []})
+        else:
+            probes = []
+            for q in with_text:
+                best = max(q["texts"], key=lambda it: len(it.get("t") or ""))
+                t = (best.get("t") or "")[:20]
+                if len(t) >= 6:
+                    probes.append(t)
+                if len(probes) >= 5:
+                    break
+            found = 0
+            for t in probes:
+                if any(pg.search_for(t) for pg in doc):
+                    found += 1
+                    break          # 搜到一条就够定性：链路通了，不必全书扫完
+            if probes and not found:
+                problems.append({"kind": "text_layer_unprinted", "detail":
+                                 "裁切存了文字层，成品里却搜不到任何一条（抽查 %d 条）" % len(probes),
+                                 "pages": []})
+            else:
+                info.append("文字层：%d/%d 题有记录，抽查 %d 条%s"
+                            % (len(with_text), len(qs), len(probes),
+                               "搜到了" if found else "（无可测样本）"))
 
     def med(v):
         return v[len(v) // 2] if v else 0.0

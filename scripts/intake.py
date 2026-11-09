@@ -51,20 +51,22 @@ ROOM = {
     "compact": {
         "label": "紧凑（省纸）",
         "short": "省纸",
-        "spec": "选填 5 道/页 · 大题 4 道/页",
-        "quota": {"选择题": 5, "填空题": 5, "解答题": 4, "证明题": 4},
-        "gaps": {"选择题": 12, "填空题": 25, "解答题": 45, "证明题": 45},
-        "fallback": 40,
+        "spec": "选填 5 道/页 · 大题 3 道/页",
+        "quota": {"选择题": 5, "填空题": 5, "解答题": 3, "证明题": 3},
+        "gaps": {"选择题": 12, "填空题": 25, "解答题": 38, "证明题": 38},
+        "fallback": 38,
         "photo": (26, 48),
         "hint": "只写答案或关键步骤；大题基本写不下完整推导",
     },
     "standard": {
         "label": "标准（默认）",
         "short": "标准",
-        "spec": "选填 4 道/页 · 大题 3 道/页",
+        # spec 写「最多 3 道」而不是「3 道/页」：42mm 目标下 3×(42+29)=213 > 205mm 版心，
+        # 实际多数解答题页只放得下 2 道。写死「3 道」会让回执跟成品对不上。
+        "spec": "选填 4 道/页 · 大题最多 3 道/页",
         "quota": {"选择题": 4, "填空题": 4, "解答题": 3, "证明题": 3},
-        "gaps": {"选择题": 18, "填空题": 33, "解答题": 62, "证明题": 62},
-        "fallback": 55,
+        "gaps": {"选择题": 18, "填空题": 33, "解答题": 42, "证明题": 42},
+        "fallback": 42,
         "photo": (35, 65),
         "hint": "解答题能写下主要推导而不换页",
     },
@@ -73,8 +75,8 @@ ROOM = {
         "short": "草稿级",
         "spec": "选填 3 道/页 · 大题 2 道/页",
         "quota": {"选择题": 3, "填空题": 3, "解答题": 2, "证明题": 2},
-        "gaps": {"选择题": 25, "填空题": 45, "解答题": 95, "证明题": 95},
-        "fallback": 80,
+        "gaps": {"选择题": 25, "填空题": 45, "解答题": 70, "证明题": 70},
+        "fallback": 70,
         "photo": (45, 90),
         "hint": "要写完整证明、中间画图或反复涂改；页数比标准多约三成",
     },
@@ -668,9 +670,15 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
 
     if facts["kind"] == "pdf" and facts["text_layer"] in ("none", "ocr") and scope_mode == "all":
         sec = facts["pages"] * 2.6
+        # 文字层是第二遍 OCR：第一遍只为找题号（条带），这一遍要整页。
+        # 不说清楚，用户会以为是同一遍、跑完发现多等十分钟。
+        extra = ""
+        if facts["text_layer"] == "none" and (answers or {}).get("text_layer", True) is not False:
+            extra = (f"成品要能搜题干的话再跑一遍整页 OCR 做文字层，约 "
+                     f"{facts['pages'] * 2.7 / 60:.0f} 分钟；不要可搜索就关掉 text_layer。")
         res["warnings"].append(
             f"扫描件全书 OCR：{facts['pages']} 页，题号条带识别大约 {sec / 60:.0f} 分钟"
-            "（有缓存，重跑只处理新增页）。先跑 try3 能省掉一次白等。"
+            "（有缓存，重跑只处理新增页）。" + extra + "先跑 try3 能省掉一次白等。"
         )
 
     if facts["kind"] == "image" and facts.get("a4_ratio_off", 0) > 0.18:
@@ -701,6 +709,11 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
         else:
             cfg[k] = v
     cfg["page_quota"] = dict(room["quota"])
+    # 答题区下限 = 本档的目标值。以前下限写死在 config.yaml（解答 32），比目标 62 低 30mm，
+    # 排版器于是可以「压破下限保住道数」——实测出现过 22mm 的答题区，写不了四行。
+    # 下限和目标必须同源：宁可少放一道，也不许把答题区压到写不下。
+    cfg["answer_gap_floor_by_section"] = dict(room["gaps"])
+    cfg["answer_gap_floor_mm"] = float(room["fallback"])
     # 混排页跟着「大题」走：一页里既有选填又有大题时，按本档的大题数算。
     # 固定 3 只对标准档成立——宽裕档还排 3 道，那道大题就只能分到 1/3 页，
     # 跟「草稿级留白」自相矛盾；紧凑档排 3 道又白浪费了省下来的空间。
@@ -866,18 +879,41 @@ def render_md(res: dict) -> str:
             md.append("")
             for o in q["options"]:
                 effect = o.get("effect")
-                # 顺序是「标签 → 说明 → 值」：实测把 key 放行首时，转述的人会连
+                # 顺序是「标签 → 说明」：实测把 key 放行首时，转述的人会连
                 # `compact` 一起抄进选择卡片的标题里，变成
                 # 「compact 选填 5 道/页 · 大题 4 道/页 | 紧凑（省纸）」。
                 # 标签是给人看的，key 是给 --answers 用的，别让前者背后者。
-                md.append(f"- {o['label']}"
-                          + (f"　—　{effect}" if effect else "")
-                          + f"　〔值：`{o['key']}`〕")
+                # 值只写在**最后一行**（「记成」），不逐条重复：卡片里每一项都拖一段
+                # 〔值：`x`〕，转述出来就是四行代码腔，答完还得自己拼 JSON。
+                md.append(f"- {o['label']}" + (f"　—　{effect}" if effect else ""))
             if q["default"] is not None:
                 md.append(f"- 不回就按默认：`{q['default']}`")
             else:
                 md.append("- 这一项没有默认值，必须你给")
             md.append(f"- 为什么问：{q['why']}")
+            md.append("")
+        # 给转述这一环的明确指令：这里是「让人点选项」，不是「让人读一段话再回一句」。
+        # 以前这一段只写「一句话就行」，转述时就会把上面几行原样铺开，
+        # 用户在聊天框里看到的是三个 label，不是一个能点的卡。
+        md += ["## 我怎么问（转述规则）", "",
+               "- 你要交给我的是**点选卡片**，不是把上面几行复述一遍再让我回一句话。",
+               "- 卡片 `question` 原样用每问第一行那句 `ask`；`options` 直接用下面的标签，",
+               "  最多再加一句 effect 当 `description`，别加序号、别加 `值：xxx`、别压缩。",
+               "- `header` 用菜名（例如「每页题数」「打印方式」），不要用 key。",
+               "- 每个问题都要有默认项，标成「（默认）」。用户点哪个都行，也可以自己打字。",
+               "- 卡片只有 `AskUserQuestion` 这一种形式能作出，写成 markdown 选项列表等于没问。",
+               ""]
+        for i, q in enumerate(res["questions"], 1):
+            opts = []
+            for o in q["options"]:
+                # 有些 label 本身就带「（默认）」，别再补一个，否则会出现
+                # 「全书（默认）（默认）」——实测项一多这条就到处都是。
+                star = "（默认）" if (o["key"] == q["default"]
+                                     and "默认" not in str(o["label"])) else ""
+                opts.append(o["label"] + star)
+            md.append(f"问{i}：{q['ask']}")
+            md.append("　选项：" + " ／ ".join(opts))
+            md.append(f"　记成：{{\"{q['id']}\": <用户选中的值>}}")
             md.append("")
         md += ["## 其余我按默认来", ""]
         for q in res["optional"]:
@@ -885,10 +921,10 @@ def render_md(res: dict) -> str:
             md.append(f"- {q['ask']}：{cur['label'] if cur else q['default']}")
         md += ["", "## 怎么回答", ""]
         if facts["kind"] == "image":
-            md.append("一句话就行，例如「18.3-18.11，填空是 18.3-18.7，留白宽一点」。"
+            md.append("（用户如果直接打字）一句话就行，例如「18.3-18.11，填空是 18.3-18.7，留白宽一点」。"
                       "范围必须给，其余不回就按默认。")
         else:
-            md.append("一句话就行，例如「全书，留白宽一点，A4」。"
+            md.append("（用户如果直接打字）一句话就行，例如「全书，留白宽一点，A4」。"
                       "不想逐项定就回一句「你定」，我按上面的默认值跑，跑之前会先跟你核对一遍。")
         md.append("")
         return "\n".join(md)
