@@ -611,6 +611,31 @@ def build_questions(doc, cfg) -> list[dict]:
         # 按文字框切就把最后一行字的底边削掉一条。
         bottom = ink_floor(raw, max(l["y1"] for l in lines), page.rect.height) + 2
         top = min(l["y0"] for l in lines) - 2
+        # 第一个题号**上方**的章节标题不归第 1 题：layout 自己会画「一、选择题」，
+        # 留在图里就印两遍；分册标题（「26 某某四套卷·第一套」）也跟着被带进来。
+        # 语义上它已经被 SEC_RE 排除了，但排除只影响"算不算正文"，
+        # 墨还在那儿——上界按 min(y0) 算，照样把它框进去。所以上界要压到它下面。
+        if marks:
+            sec_above = [l for l in lines
+                         if SEC_RE.match(l["text"]) and l["y1"] <= marks[0]["y0"] + 1]
+            if sec_above:
+                sec = sec_above[-1]
+                # 章节标题常有两三行：「一、选择题:1~10 题，每小题 5 分…」换行成
+                # 「符合题目要求的.」。续行不命中 SEC_RE，但同左沿、中间没夹题号，
+                # 它和标题是一段——只压到标题那一行，续行还会留在题 1 的图里。
+                qpats = cfg["question_patterns"]
+                tail = [l for l in lines
+                        if sec["y1"] - 2 <= l["y0"] < marks[0]["y0"] + 1
+                        and abs(l["x0"] - sec["x0"]) <= 6
+                        and not any(re.match(p, l["text"]) for p in qpats)]
+                want = max([sec["y1"]] + [l["y1"] for l in tail]) + 2
+                # 但不许压到第 1 题**自己的墨顶**以下：题号后面紧跟大公式时，
+                # 公式常比题号高出七八点（2024 数三第 1 题，墨顶 324.5 / 题号 331.2），
+                # 压过头就把公式顶削掉一条。封顶取「题号所在墨块的顶 −0.5」。
+                blk = next((b for b in blocks if b[1] > marks[0]["y0"]), None)
+                if blk is not None:
+                    want = min(want, blk[0] - 0.5)
+                top = max(top, want)
 
         def sec_at(y: float) -> str | None:
             got = None
