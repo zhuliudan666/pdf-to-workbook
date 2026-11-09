@@ -633,7 +633,11 @@ def build_questions(doc, cfg) -> list[dict]:
             head_bot = min(head_end, ink_floor(raw, max(l["y1"] for l in head_body), head_end) + 2)
         else:
             head_top = head_bot = 0
-        if head_body and head_bot - head_top > 3:
+        # 页首这一带的净高门槛：低于半行字（≈8pt）的不可能是"上一题的下半截"，
+        # 只可能是被 ignore_patterns 剔掉的水印/广告残留的墨迹，或者 content_top
+        # 压在一条横线上的半个像素。以前门槛是 3pt，一本四套卷合订实测在这种带上
+        # 生成了 3.54pt 的「空续片」，结构校验报「题区间过窄」——真续页至少是一整行字。
+        if head_body and head_bot - head_top > 8:
             # 「续页」必须是**物理上紧挨着的下一页**。pages 允许离散页段
             # （讲义只做每章课后题时常写 "3,6,9,12"），这时 p3 的下一张选中页是 p6，
             # 中间隔着一整章的正文。以前只看「上一个选中页」，结果每章最后一题

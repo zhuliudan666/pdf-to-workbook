@@ -136,6 +136,81 @@ def hear(text: str) -> dict:
     return got
 
 
+# ---------------------------------------------------------- 目录 → 分章
+
+# 目录行的通用形态：「标题 …… 页码」。点导线常见 . ．· … 混排。
+TOC_LINE = re.compile(r"^(?P<title>\S.*?)[\s.．·…]{3,}\s*(?P<page>\d{1,4})\s*$")
+# 「第X套 / 第X年 / 第X卷 / 第X册」——多份独立卷子合订的特征。
+# 刻意不含「章 / 部分 / 命题点」：那些是单本书内部的层级，走 catalog，不该切成分册。
+MULTI_VOL = re.compile(r"第\s*[一二三四五六七八九十百零\d]+\s*(?:套|年|卷|册)")
+# 页脚书内页码「第 3 页」，用来把书内页码换算成 PDF 页码
+FOOT_PAGE = re.compile(r"^第\s*(\d{1,4})\s*页$")
+
+
+def detect_toc_chapters(doc, max_toc_pages: int = 6, max_anchor_pages: int = 40) -> dict | None:
+    """从目录页认出「多套 / 多年 / 多卷合订」的分册页段，页段按 PDF 页码返回。
+
+    为什么需要：多套合订的每一套题号都从 1 重排，不分章的话结构校验会报一片
+    「题号重复 / 乱序」，看起来像工具不支持这种书（实测 4 套卷报 24 处高危）。
+
+    判据全部取自文件本身，认不出就返回 None——宁可让用户手写 chapters，也不猜：
+      1. 同一页出现 ≥2 行「标题……页码」⇒ 这页是目录
+      2. 条目标题里 ≥2 条带「第N套/年/卷/册」⇒ 这本确实需要分册
+    书内页码 → PDF 页码的偏移，优先用页脚「第N页」多数投票锚定；
+    锚不到就退回「最后一页目录的下一页是正文第一页」。
+    """
+    toc_pages: list[int] = []
+    entries: list[tuple[str, int]] = []
+    for i in range(min(max_toc_pages, len(doc))):
+        hit = []
+        for line in doc[i].get_text("text").splitlines():
+            m = TOC_LINE.match(line.strip())
+            if m:
+                hit.append((m.group("title").strip(" .．·…"), int(m.group("page"))))
+        if len(hit) >= 2:
+            toc_pages.append(i)
+            entries.extend(hit)
+    if len(entries) < 2:
+        return None
+    if sum(1 for t, _ in entries if MULTI_VOL.search(t)) < 2:
+        return None
+
+    votes: dict[int, int] = {}
+    for i in range(min(max_anchor_pages, len(doc))):
+        for line in doc[i].get_text("text").splitlines():
+            m = FOOT_PAGE.match(line.strip())
+            if m:
+                off = (i + 1) - int(m.group(1))
+                votes[off] = votes.get(off, 0) + 1
+                break
+    if votes:
+        offset = max(votes, key=votes.get)
+        why = "页脚「第N页」锚定，书内页码 + %d = PDF 页码" % offset
+    else:
+        offset = max(toc_pages) + 1
+        why = "按目录位置推算，书内页码 + %d = PDF 页码" % offset
+
+    chapters = []
+    # 目录条目标题通常共用一个书名前缀（「26 李林四套卷数三·第一套」），
+    # 去掉公共前缀只留「第一套」——章节页上印整串书名既挤又没用。
+    titles = [t for t, _ in entries]
+    prefix = os.path.commonprefix(titles)
+    cut = max(prefix.rfind(ch) for ch in "·・/／、-：: 　")
+    if cut >= 3:
+        titles = [t[cut + 1:].strip() or t for t in titles]
+
+    for idx, (_, book_page) in enumerate(entries):
+        title = titles[idx]
+        start = book_page + offset
+        end = (entries[idx + 1][1] + offset - 1) if idx + 1 < len(entries) else len(doc)
+        start = max(1, min(start, len(doc)))
+        end = max(start, min(end, len(doc)))
+        chapters.append({"title": title, "pages": "%d-%d" % (start, end)})
+    if len(chapters) < 2:
+        return None
+    return {"chapters": chapters, "offset": offset, "why": why}
+
+
 # ---------------------------------------------------------------- 探测
 
 
@@ -465,6 +540,19 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
         res["why_missing"] = "；".join(f"{q['ask']}" for q in asking)
         return res
 
+    # 目录 → 分册页段。放在这里（而不是组装配置时）是为了让它也能进确认回执：
+    # 分章一旦认错，成品会从「24 处高危」变成「看着正常但章名全错」，得让用户看见。
+    if facts["kind"] == "pdf" and facts.get("text_layer") == "ok":
+        try:
+            _doc = pymupdf.open(facts["input"])
+        except Exception:  # noqa: BLE001 —— self-test 喂的 facts 里可能没有真文件
+            _doc = None
+        if _doc is not None:
+            try:
+                res["toc"] = detect_toc_chapters(_doc)
+            finally:
+                _doc.close()
+
     # ---- 拿回复合值，缺的用默认 ----
     for q in qs + opt:
         if answers.get(q["id"]) in (None, ""):
@@ -635,6 +723,11 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
         cfg["header"]["title"] = str(answers["title"])
     if facts["kind"] == "pdf" and scope_mode in ("pages", "try"):
         cfg["pages"] = spec
+    # 目录认出来的分册页段直接落进配置：多套合订必须按册分章，
+    # 否则每册题号都从 1 重排，会被结构校验判成「重号 / 乱序」。
+    toc = res.get("toc")
+    if toc and not cfg.get("chapters"):
+        cfg["chapters"] = toc["chapters"]
 
     plan: dict = {"route": "", "commands": [], "outputs": [], "rooms": room["quota"]}
 
@@ -829,6 +922,12 @@ def render_md(res: dict) -> str:
     else:
         scope_txt = "全书" if not cfg.get("pages") else f"第 {cfg['pages']} 页"
     md.append(f"- 范围：{scope_txt}")
+    toc = res.get("toc")
+    if toc:
+        md.append(f"- 分章：从目录认出 {len(toc['chapters'])} 册 —— "
+                  + "、".join(f"{c['title']}（P{c['pages']}）" for c in toc["chapters"]))
+        md.append(f"  {toc['why']}。认错了直接改 `intake.yaml` 里的 `chapters`；"
+                  f"多套合订不分章会报一片「题号重复」。")
     est = plan.get("estimate") or {}
     if est.get("questions"):
         tail = f"，成品约 {est['pages']} 页" if est.get("pages") not in (None, "—") else ""
