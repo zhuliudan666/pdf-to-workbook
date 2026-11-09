@@ -288,8 +288,41 @@ def page_lines(page) -> list[dict]:
 
 
 def content_lines(page, cfg) -> list[dict]:
+    """正文行：剔掉页眉页脚水印、广告、页码。
+
+    水印经常**不是一行**：左边「公众号：xxx」、右边「26 考研某某四套卷数三」在
+    PDF 里是同一水平带上的两段文字，只按行首词剔会漏掉右半截。漏掉的那半截
+    会当成正文，把整条带子顶到页面最上面，裁切时连广告墨迹一起框进题图
+    （实测第 6 题续到下一页的残条里带着「公众号：风中羽小易」整行）。
+
+    所以按**水平带**判：同一条带（y 重叠过半）里只要有一段命中忽略规则，
+    整条带都算水印。带题号的行例外——它永远不算水印，免得把题切没了。
+    """
     pats = cfg["ignore_patterns"]
-    return [l for l in page_lines(page) if not any(re.search(p, l["text"]) for p in pats)]
+    qpats = cfg["question_patterns"]
+    lines = page_lines(page)
+    if not pats:
+        return lines
+    hits = [l for l in lines if any(re.search(p, l["text"]) for p in pats)]
+    if not hits:
+        return lines
+
+    def same_band(a: dict, b: dict) -> bool:
+        overlap = min(a["y1"], b["y1"]) - max(a["y0"], b["y0"])
+        short = min(a["y1"] - a["y0"], b["y1"] - b["y0"]) or 1.0
+        return overlap >= 0.5 * short
+
+    keep = []
+    for l in lines:
+        if any(re.search(p, l["text"]) for p in pats):
+            continue                      # 自己就是水印
+        if any(re.match(p, l["text"]) for p in qpats):
+            keep.append(l)                # 题号行绝不因"同带"被删
+            continue
+        if any(same_band(l, h) for h in hits):
+            continue                      # 和水印同一条带：算水印的另一段
+        keep.append(l)
+    return keep
 
 
 def find_marks(lines: list[dict], cfg) -> list[dict]:
