@@ -664,6 +664,18 @@ def build_questions(doc, cfg) -> list[dict]:
         if head_body:
             head_top = min(l["y0"] for l in head_body) - 2
             head_bot = min(head_end, ink_floor(raw, max(l["y1"] for l in head_body), head_end) + 2)
+            # 章节标题（「三、解答题:17~22 小题，共 70 分…」）不属于任何一道题，
+            # 但它的墨可能正好落在页首带中间——上下界一框，就把这句标题当成
+            # 上一题的尾句切进图里了（实测第 16 题续到下一页的残条只框到这一行，
+            # 成品上看着像题目末尾多了一句「三、解答题:…」）。
+            # 把带子在标题两侧裁开；裁空了就整条丢掉——真续页不会中间夹章节标题。
+            for sec in (l for l in lines if SEC_RE.match(l["text"])):
+                if sec["y1"] <= head_top or sec["y0"] >= head_bot:
+                    continue
+                if sec["y0"] > head_top + 1:
+                    head_bot = min(head_bot, sec["y0"] - 1)   # 优先留标题上方那截
+                else:
+                    head_top = max(head_top, sec["y1"] + 1)
         else:
             head_top = head_bot = 0
         # 页首这一带的净高门槛：低于半行字（≈8pt）的不可能是"上一题的下半截"，
