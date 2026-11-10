@@ -2,47 +2,26 @@
 # 验证过的样本：2024 数三原卷（3 页 22 题，文本层）
 # 多套合订本（10–26 年装订成一本，52 页）不归这里，归 bank-book：每年写一段 chapters，
 #   2010–2026 数三 385 题已跑通（11×23 + 6×22，切点质检通过、验收通过）。
-#
-# 自动生成：tools/learn.py，2026-11-10 21:46
-# 来源：book.pdf（4 页 · 22 题 · 文字层 ocr · 成品 7 页）
-#
-# 这本书的条带几何（**只对同系列书成立，不要照抄到别的书**）：
-#   content_box: [50, 548]
-#   ocr.strip_x0: 40
-#   ocr.strip_x1: 175
-#   ocr.strip_dpi: 300
-#   ocr.content_top: 40
-#   ocr.content_bottom_margin: 45
-#   改它们等于废掉整本 OCR 缓存；content_box 和 ocr.strip_x0 必须一起改。
-
 id: exam-paper
-label: "真题卷（单份考卷，整卷都是题）"
+label: 真题卷（单份考卷，整卷都是题）
 verified: true
-sample: "欧几里得万人模考9月试卷数三 4 页 22 题（扫描件，走 OCR）"
-route: "scripts/segment.py（有文本层，直接读题号坐标）；扫描件走 segment_ocr.py"
+sample: 2024 数三原卷（3 页 22 题，文本层）；同一套判据也验过 2010–2026 数三合订本的单年切片
+route: scripts/segment.py（有文本层，直接读题号坐标）；扫描件走 segment_ocr.py
 room: standard
 when:
   kind: pdf
-  text_layer: [ok, none, ocr]
+  # 原卷有电子版也有扫描版，两条都收
+  text_layer: [ok, none]
   pages: [2, 20]
-  hits_per_page: [0.6, 14]
+  hits_per_page: [3, 14]
   pages_with_marks_ratio: [0.7, 1.0]
-  head_hits: {题型: [1, 99]}
+  head_hits:
+    题型: [1, 99]
   two_col: false
-samples:
-  - "欧几里得万人模考9月试卷数三 4 页 22 题"
-config:
-  question_patterns: ["^\\s*(\\d+)\\s*[.．、]\\s*[（(]\\s*(\\d+)\\s*[)）]", "^\\s*(\\d+)\\s*[.．、]\\s*(?=\\S)", "^\\s*[（(]\\s*(\\d+)\\s*[)）]\\s*(?=\\S)", "^\\s*(\\d+)\\s*[.．、]\\s*$"]
-  ignore_patterns: ["^\\s*B\\s*站", "第\\s*\\d+\\s*页", "^\\s*[-—]\\s*\\d+\\s*[-—]\\s*$", "^\\s*\\d+\\s*/\\s*\\d+\\s*$", "^\\s*[·•∙・]\\s*\\d+\\s*[·•∙・]\\s*$", "^\\s*(公众号|微信|VX|vx|QQ\\s*群|加群|扫码|二维码|关注|点赞|收藏|淘宝|店铺|微店|小红书|抖音|知乎|更多资料|免费领取|持续更新)"]
-  answer_gap_floor_by_section: {选择题: 18, 填空题: 33, 解答题: 42, 证明题: 42}
-  answer_gap_cap_by_section: {选择题: 40, 填空题: 60, 解答题: 130, 证明题: 130}
-  image: {mode: bitonal, threshold: 200}
-  text_layer: true
-  cross_page: {merge_continuation: true}
 expect:
-  题数: "约等于题号命中数"
-  成品页数: "题数 ÷ (选填 4 / 大题 3)"
-accept: "页眉统一、题号连续、qa.csv 无标记、末题下方留白 ≥ 25mm"
+  题数: 约等于题号命中数
+  成品页数: 题数 ÷ (选填 4 / 大题 3)
+accept: 页眉统一、题号连续、qa.csv 无标记、末题下方留白 ≥ 25mm
 pitfalls:
   - "题号后面紧跟大公式时，PDF 会把「12.」单独排成一行，被当成新题（2024 数三第 20 题的 1/12，整册编号错位）。common._drop_floating_numbers 已按左边距挡掉，别放宽 8pt 那个容差"
   - "四选项排成 A/B、C/D 两列会骗过双栏判据——2024 数三三页曾被全部误判双栏。靠「横穿版心的行 ≤1」这条挡住，动 probe.spanning_lines 先跑 selftest"
@@ -54,6 +33,3 @@ pitfalls:
   - "多套合订时每年题号都从 1 重排：intake 现在会读目录自动写 chapters（判据：一页出现 ≥2 行「标题……页码」，且 ≥2 条标题带「第N套/年/卷/册」；书内页码用页脚「第N页」锚定换算成 PDF 页码）。锚不到页码、或目录是图片时认不出来，会退回不写——这时要手写 chapters（页段→「2010 年数三」），不写就整年既被判重号、又被「递增」判据删光（52 页实测只切出 27 题）"
   - "题干是公式图片时，文字层里题号独占一行、只剩「14.」三个字符。带 (?=\\S) 的题号正则一条都命不中，那道题会整题消失，而且被并进上一题的图里——结构校验只报「跳号」，看不出图里多了东西。config.yaml 的第 4 条正则 ^\\s*(\\d+)\\s*[.．、]\\s*$ 就是挡这个的，别删"
   - "资料类 PDF 的页眉常印「公众号：xxx」，会整条切进题图。它通常被拆成两段（左公众号名、右书名），只按行首词剔会漏掉右半截——漏掉那截会把整条带顶到页顶。content_lines 按**水平带**判：同带里有一段命中就整带算水印，带题号的行除外"
-  - "22 题里 qa.csv 标了 2 片，其中窄缝 0 处。窄缝才要目检：切穿多是相邻两题共用一条边或跨页续文，不是错误"
-  - "条带几何是这类书的主要事故源：strip_x0 改了要整本重识别，content_box 改了会切掉悬挂式题号半截（切点全对、qa 零标记，只能对着原书看），两者必须一起改"
-  - "扫描件整卷只切出最后一组解答题（某 9 月模考卷 22 题只切出解17–22 六道，结构校验「连续无重号」、验收全绿）：题号是「1. 曲线…」裸数字+点，这条正则被 STRIP_UNSAFE 挡掉；只有解答题「17.（本题满分…」因括号命中内置 QUESTION_RE。修法：ocr.loose_numbers: true，并把 pages 圈到题目页（封面「1．考生需…」也是裸数字+点，不排掉会混进假题），重跑 segment→crop→layout。查法：SEG_DEBUG_PAGES=2,3 看那些行连候选都没进"
