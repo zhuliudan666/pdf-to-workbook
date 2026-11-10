@@ -408,8 +408,9 @@ def questions_for(facts: dict) -> list[dict]:
             None,
             "照片里没有可靠的题号序列可自动推断，切几道题只能由你说",
         ))
-    elif (facts.get("cls") or {}).get("type") not in ("exam-paper", "bank-book"):
-        # 真题卷/题库这两类整本都是题，范围就是全书——不问了，回执里报一句
+    else:
+        # 范围、每页题数、纸型是流程里固定要交的三张卡，不因「能测出来」而跳过：
+        # 即使命中真题卷/题库预案（整本都是题、范围默认全书），也要让用户看见并确认。
         qs.append(_q(
             "scope",
             "做到哪一部分？",
@@ -459,28 +460,34 @@ def questions_for(facts: dict) -> list[dict]:
         "答题区的宽窄全看这一项；改它不用重新切题，但整本要重排一遍",
     ))
 
-    # 只有真的糊到影响打印时才问「用哪种方式做」。分辨率够就直接定位图，不拿这个问题烦人。
-    # 170 这条线是实测出来的：186dpi 的扫描件印出来可接受，155dpi 的手机照片被退回。
-    if facts["kind"] == "image" or (facts.get("render_dpi") or 999) < 170:
-        dpi = facts.get("render_dpi")
-        t = estimate_times(facts)
-        qs.append(_q(
-            "fidelity",
-            "用哪种方式制作？",
-            [
-                {"key": "bitmap", "label": f"位图裁切（默认 · {t['bitmap']}）",
-                 "effect": f"把原书每道题裁成图、不重排，脚本全程自动跑；{t['bitmap_basis']}。"
-                           f"按 {dpi}dpi 打印会有点发虚，但能读"},
-                {"key": "vector", "label": f"矢量重排（{t['vector']}）",
-                 "effect": f"逐题转写成文字重新排版，版式会变、印刷级清晰；{t['vector_basis']}。"
-                           "由 agent 逐题读图转写，不是脚本自动切换"},
-            ],
-            "bitmap",
-            f"这份输入只有约 {dpi}dpi：位图是「把原书裁成图」，矢量是「逐题转写重排成文字」，"
-            "两条路的做法和耗时差得很远，必须你定。"
-            "上面的时间是从上传到交付的整轮粗估（含判读、校对和可能的重跑），"
-            "**不是脚本执行时间**；机器快慢、是否命中 OCR 缓存都会变",
-        ))
+    # 第三张卡：制作方式。三问是流程约定，固定问，不因「分辨率够」而跳过。
+    # 低 dpi 素材位图会发虚；有文字层 / 高 dpi 素材矢量收益不大，但两条路和预估时间
+    # 都摆出来由用户定。选中矢量若被拦回，回执里会说明原因，不在卡片里瞒着。
+    dpi = facts.get("render_dpi")
+    t = estimate_times(facts)
+    if not dpi:
+        blur = "有文字层时按 400dpi 渲染，清晰度已够打印"
+    elif dpi < 170:
+        blur = f"按约 {dpi}dpi 打印会有点发虚，但能读"
+    else:
+        blur = f"原生约 {dpi}dpi，位图直接印就够清晰"
+    qs.append(_q(
+        "fidelity",
+        "用哪种方式制作？",
+        [
+            {"key": "bitmap", "label": f"位图裁切（默认 · {t['bitmap']}）",
+             "effect": f"把原书每道题裁成图、不重排，脚本全程自动跑；{t['bitmap_basis']}。{blur}"},
+            {"key": "vector", "label": f"矢量重排（{t['vector']}）",
+             "effect": f"逐题转写成文字重新排版，版式会变、印刷级清晰；{t['vector_basis']}。"
+                       "由 agent 逐题读图转写，不是脚本自动切换"},
+        ],
+        "bitmap",
+        "位图是「把原书裁成图」，矢量是「逐题转写重排成文字」，"
+        "两条路的做法、版式和耗时都不同，按流程交给你定。"
+        "上面的时间是从上传到交付的整轮粗估（含判读、校对和可能的重跑），"
+        "**不是脚本执行时间**；机器快慢、是否命中 OCR 缓存都会变。"
+        "有文字层或原图 ≥240dpi 时选矢量会被改回位图（转写只会引入识别错误），回执里会说明",
+    ))
 
     return qs
 
