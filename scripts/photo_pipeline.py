@@ -189,6 +189,12 @@ def main():
         crops.append((''.join([a.prefix, '.', str(n)]), p, sub.shape[1], sub.shape[0]))
 
     fill_set = set(x.strip() for x in a.fill.split(',') if x.strip())
+    # 矢量重排的转写模板要按题号拿裁片。写一份清单，别让 agent 去猜文件名，
+    # 也别丢掉「哪些是填空」——题型决定答题区留白。
+    import json
+    with open(os.path.join(work, 'crops.json'), 'w', encoding='utf-8') as fh:
+        json.dump([{"no": no, "kind": "fill" if no in fill_set else "solve", "image": p}
+                   for no, p, _w, _h in crops], fh, ensure_ascii=False, indent=2)
     mm = 72 / 25.4
     PW, PH = 210 * mm, 297 * mm
     ML = MR = 20 * mm

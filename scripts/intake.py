@@ -358,6 +358,33 @@ def _q(qid: str, ask: str, options: list[dict], default, why: str, blocking=True
             "blocking": blocking}
 
 
+def estimate_times(facts: dict) -> dict:
+    """给「清晰度」卡片估两条路的工作时间，并把依据一起交出去。
+
+    位图：扫描件 = 条带 OCR ~2.6s/页 + 文字层整页 OCR ~2.7s/页 + 构建；
+          文本层 PDF 不跑 OCR，接近零成本。
+    矢量：题数 × 30–60 秒（读图 + 转写 + 核对）。认门阶段扫描件还没有题数，
+          按每页 5 题粗估，并把「粗估」写进卡片——不让人把估的当成量过的。
+    """
+    pages = max(1, int(facts.get("pages") or 1))
+    if facts.get("text_layer") != "ok":
+        bitmap_min = max(1, math.ceil((pages * (2.6 + 2.7) + 10) / 60))
+        bitmap_basis = f"按 {pages} 页扫描件两遍 OCR 估"
+    else:
+        bitmap_min = 1
+        bitmap_basis = "有文字层，不用跑 OCR"
+    n = facts.get("est_questions")
+    guessed = not bool(n)
+    n = int(n) if n else pages * 5
+    lo, hi = round(n * 30 / 60), round(n * 60 / 60)
+    vector_txt = (f"约 {lo}–{hi} 分钟" if hi < 90
+                  else f"约 {lo / 60:.1f}–{hi / 60:.1f} 小时")
+    vector_basis = (f"按 {n} 题" + ("（每页约 5 题粗估）" if guessed else "")
+                    + " × 30–60 秒/题，含逐题核对")
+    return {"bitmap": f"约 {bitmap_min} 分钟", "bitmap_basis": bitmap_basis,
+            "vector": vector_txt, "vector_basis": vector_basis}
+
+
 def questions_for(facts: dict) -> list[dict]:
     """只问「测不出来」的决定。顺序按影响大小，不是按参数字典顺序。"""
     qs: list[dict] = []
@@ -430,17 +457,21 @@ def questions_for(facts: dict) -> list[dict]:
     # 170 这条线是实测出来的：186dpi 的扫描件印出来可接受，155dpi 的手机照片被退回。
     if facts["kind"] == "image" or (facts.get("render_dpi") or 999) < 170:
         dpi = facts.get("render_dpi")
+        t = estimate_times(facts)
         qs.append(_q(
             "fidelity",
             "清晰度要哪一种？",
             [
-                {"key": "bitmap", "label": "位图裁切（默认）",
-                 "effect": f"原样保留，几分钟出结果；按 {dpi}dpi 打印会有点发虚，但能读"},
-                {"key": "vector", "label": "矢量重排",
-                 "effect": "印刷级清晰；每题 30–60 秒转写 + 逐题核对，20 题以上要按小时算"},
+                {"key": "bitmap", "label": f"位图裁切（默认 · {t['bitmap']}）",
+                 "effect": f"原样保留，全自动；{t['bitmap_basis']}。"
+                           f"按 {dpi}dpi 打印会有点发虚，但能读"},
+                {"key": "vector", "label": f"矢量重排（{t['vector']}）",
+                 "effect": f"印刷级清晰；{t['vector_basis']}。"
+                           "由 agent 逐题读图转写，不是脚本自动切换"},
             ],
             "bitmap",
-            f"这份输入只有约 {dpi}dpi，位图撑不住「放大看」，而这个代价差一个数量级，必须你定",
+            f"这份输入只有约 {dpi}dpi，位图撑不住「放大看」，两条路差一个数量级"
+            "（上面的时间是粗估，实际题数以切出来的为准），必须你定",
         ))
 
     return qs
@@ -637,11 +668,16 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
             )
             answers["fidelity"] = "bitmap"
         else:
-            n = facts.get("est_questions") or (len(photo.get("items") or []) or None)
-            if n and n > 12:
+            t = estimate_times(facts)
+            # 扫描件在认门阶段没有题数，别让「>12 题」的警告因为 n=None 静默跳过
+            n = facts.get("est_questions") or (len(photo.get("items") or []) or 0)
+            if not n:
+                n = max(1, int(facts.get("pages") or 1)) * 5
+            if n > 12:
                 res["warnings"].append(
-                    f"矢量重排要逐题转写再逐题核对，{n} 题大约 {n * 45 // 60}–{n} 分钟，"
-                    "而且长任务里遗漏概率会上升。建议先做一小节验收，再决定要不要全做。"
+                    f"矢量重排预计 {t['vector']}（{t['vector_basis']}）："
+                    "要逐题转写再逐题核对，长任务里遗漏概率会上升。"
+                    "建议先做一小节验收，再决定要不要全做。"
                 )
             res["warnings"].append(
                 "矢量重排的失败是「认错了但看起来完全正常」，所以每题拿不准的符号必须写进 "
@@ -732,6 +768,10 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
     # 跟「草稿级留白」自相矛盾；紧凑档排 3 道又白浪费了省下来的空间。
     cfg["page_quota_mixed"] = int(room["quota"].get("解答题") or 3)
     cfg["gap_style"] = answers.get("style") or "blank"
+    if answers.get("fidelity") == "vector":
+        # 意图标记：build.py 不做矢量排版；agent 读到它才接手 reflow 路线
+        # （先拿位图裁片 -> vector_plan.py 出模板 -> 逐题转写 -> reflow.py）。
+        cfg["fidelity"] = "vector"
     # 有文本层：源头就是矢量，400dpi 是白拿的清晰度；扫描件原生 dpi 已经是上限，
     # 调高只是插值放大，除了变胖没有收益。
     render_dpi = int(answers.get("dpi") or (400 if facts["text_layer"] == "ok" else 300))
@@ -774,6 +814,18 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
         plan["photo_items"] = items
         plan["photo_fills"] = fills
         plan["note"] = "照片路线没有校对单，交付前必须看一眼渲染出的 PNG。"
+        if answers.get("fidelity") == "vector":
+            work = os.path.splitext(out_pdf)[0] + "_work"
+            vpdf = os.path.splitext(out_pdf)[0] + "_矢量.pdf"
+            plan["commands"] += [
+                {"step": "矢量重排 ① 生成转写模板（照片裁片）",
+                 "cmd": f'vector_plan.py "{work}"'},
+                {"step": "矢量重排 ② agent 逐题读图填写 items.json（见 转写任务.md，拿不准写 uncertain）",
+                 "cmd": ""},
+                {"step": "矢量重排 ③ 排版 + 出校对单，逐题对照原图",
+                 "cmd": f'reflow.py "{work}/items.json" -o "{vpdf}"'},
+            ]
+            plan["outputs"] += [f"{work}/items.json", vpdf]
     else:
         out_dir = answers.get("out") or "workbook_out"
         cfg_path = str(Path(out_dir) / "intake.yaml")
@@ -812,6 +864,16 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
                     f'--questions "{out_dir}/questions.json"'),
         })
         plan["outputs"] = [f"{out_dir}/做题本.pdf", f"{out_dir}/校对单.pdf"]
+        if answers.get("fidelity") == "vector":
+            plan["commands"] += [
+                {"step": "矢量重排 ① 生成转写模板（复用位图流水线裁出的题图）",
+                 "cmd": f'vector_plan.py "{out_dir}"'},
+                {"step": "矢量重排 ② agent 逐题读图填写 items.json（见 转写任务.md，拿不准写 uncertain）",
+                 "cmd": ""},
+                {"step": "矢量重排 ③ 排版 + 出校对单，逐题对照原图",
+                 "cmd": f'reflow.py "{out_dir}/items.json" -o "{out_dir}/做题本_矢量.pdf"'},
+            ]
+            plan["outputs"] += [f"{out_dir}/items.json", f"{out_dir}/做题本_矢量.pdf"]
         n = facts.get("est_questions")
         if n and scope_mode in ("all",):
             # 页数 = 题数 ÷ 平均每页题数。选填和大题配额不同，取两者均值近似。
@@ -986,7 +1048,12 @@ def render_md(res: dict) -> str:
               f"解答 {room['gaps']['解答题']} mm；混排页按 {room['quota']['解答题']} 道）")
     md.append(f"- 纸：{PRINT.get(a.get('print') or 'a4', PRINT['a4'])['label']}，"
               f"留白样式 {STYLE.get(a.get('style') or 'blank', '纯白')}")
-    md.append(f"- 清晰度：{'矢量重排（逐题转写）' if a.get('fidelity') == 'vector' else '位图裁切'}"
+    _t = estimate_times(facts)
+    if a.get("fidelity") == "vector":
+        _clarity = f"矢量重排（agent 逐题转写，{_t['vector']}）"
+    else:
+        _clarity = f"位图裁切（{_t['bitmap']}）"
+    md.append(f"- 清晰度：{_clarity}"
               f"{'，渲染 400dpi' if cfg['paper']['dpi'] >= 400 else ''}")
     heard = res.get("heard") or {}
     if heard:

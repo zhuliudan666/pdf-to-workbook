@@ -707,6 +707,28 @@ chars_per_page / hits_per_page / images_per_page / num_chaptered_ratio / answer_
 | 题目 → LaTeX | 多模态模型（读图转写） | 混排行切不开，只有模型能同时理解中文和公式 |
 | LaTeX → A4 做题本 | `reflow.py` | 纯排版，确定性，不该让模型碰 |
 
+#### 选了「矢量重排」，agent 怎么接手
+
+`intake.py` 的「清晰度」卡片只在**照片或有效 dpi < 170** 时弹。两个选项的 label 直接带预估时间
+（位图按页数 × 两遍 OCR 估，矢量按题数 × 30–60 秒估；扫描件在认门阶段没有题数，
+按每页 5 题粗估并把「粗估」写进卡片），effect 里给依据，让人一眼看出差一个数量级。
+选了矢量，`intake.yaml` 会写 `fidelity: vector`，`intake.md` 的命令链多出三步。
+
+**这不是脚本自动切换**：`build.py` 不读 `fidelity`，照常先出位图成品和裁片——
+裁片正是转写的输入。矢量路线由 agent 接手，四步：
+
+1. 照常跑 `build.py`（照片路线跑 `photo_pipeline.py`），拿到 `questions.json` 和 `crops/`。
+2. `python scripts/vector_plan.py 输出目录`（照片加 `--images "<work>/q_*.png"`），
+   生成 `items.json` 模板 + `转写任务.md`。模板每题一条：题号、题型、`src_image`、
+   空的 `stem`/`disp`/`subs` 和**空的 `uncertain`**。已存在时不覆盖，免得抹掉转写成果。
+3. agent 按 `references/transcribe-prompt.md` 逐题读 `src_image` 填字段。
+   **任何拿不准的符号写进 `uncertain`**，只在聊天里说「这题我不确定」等于没说过。
+4. `python scripts/reflow.py items.json -o 做题本_矢量.pdf`，打开自动生成的校对单，
+   红框逐题对照原图核。这一遍省不掉。
+
+卡片时间是粗估，实际以 `items.json` 的条数为准。有文本层的 PDF 或 ≥240dpi 扫描件
+会被拦回位图（前者把 dpi 提到 400）——源头本来就是矢量，转写只会引入识别错误。
+
 **通用 OCR 为什么不行**（实测，一张 9 题的考研数学页）：
 
 ```
@@ -823,6 +845,7 @@ scripts/find_exercises.py 讲义专用：圈出每章课后题的页段 + 章名
 scripts/split_volumes.py 合订卷预处理：按卷标题拆页、丢目录页、写 chapters（--record 留依据）
 scripts/probe.py         体检：文本层、题号正则命中率、页眉页脚
 scripts/photo_pipeline.py 手机照片单页流水线（归一化→去斜→OCR→切题→拼版）
+scripts/vector_plan.py   → items.json 模板 + 转写任务.md（agent 接手矢量重排的入口）
 scripts/reflow.py        矢量重排：items.json(LaTeX) → KaTeX 渲染 → A4 PDF
 references/example-items.json 矢量重排的输入样例（4 道题，含 uncertain 字段的写法）
 references/transcribe-prompt.md 矢量重排的转写提示词（题图 → items.json，uncertain 必填）
