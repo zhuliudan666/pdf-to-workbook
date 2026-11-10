@@ -359,7 +359,7 @@ def _q(qid: str, ask: str, options: list[dict], default, why: str, blocking=True
 
 
 def estimate_times(facts: dict) -> dict:
-    """给「清晰度」卡片估两条路的工作时间，并把依据一起交出去。
+    """给「用哪种方式制作」卡片估两条路的工作时间，并把依据一起交出去。
 
     位图：扫描件 = 条带 OCR ~2.6s/页 + 文字层整页 OCR ~2.7s/页 + 构建；
           文本层 PDF 不跑 OCR，接近零成本。
@@ -453,25 +453,25 @@ def questions_for(facts: dict) -> list[dict]:
         "答题区的宽窄全看这一项；改它不用重新切题，但整本要重排一遍",
     ))
 
-    # 只有真的糊到影响打印时才问清晰度。分辨率够就直接定，不拿这个问题烦人。
+    # 只有真的糊到影响打印时才问「用哪种方式做」。分辨率够就直接定位图，不拿这个问题烦人。
     # 170 这条线是实测出来的：186dpi 的扫描件印出来可接受，155dpi 的手机照片被退回。
     if facts["kind"] == "image" or (facts.get("render_dpi") or 999) < 170:
         dpi = facts.get("render_dpi")
         t = estimate_times(facts)
         qs.append(_q(
             "fidelity",
-            "清晰度要哪一种？",
+            "用哪种方式制作？",
             [
                 {"key": "bitmap", "label": f"位图裁切（默认 · {t['bitmap']}）",
-                 "effect": f"原样保留，全自动；{t['bitmap_basis']}。"
+                 "effect": f"把原书每道题裁成图、不重排，全自动；{t['bitmap_basis']}。"
                            f"按 {dpi}dpi 打印会有点发虚，但能读"},
                 {"key": "vector", "label": f"矢量重排（{t['vector']}）",
-                 "effect": f"印刷级清晰；{t['vector_basis']}。"
+                 "effect": f"逐题转写成文字重新排版，版式会变、印刷级清晰；{t['vector_basis']}。"
                            "由 agent 逐题读图转写，不是脚本自动切换"},
             ],
             "bitmap",
-            f"这份输入只有约 {dpi}dpi，位图撑不住「放大看」，两条路差一个数量级"
-            "（上面的时间是粗估，实际题数以切出来的为准），必须你定",
+            f"这份输入只有约 {dpi}dpi：位图是「把原书裁成图」，矢量是「逐题转写重排成文字」，"
+            "两种做法差一个数量级（上面的时间是粗估，实际题数以切出来的为准），必须你定",
         ))
 
     return qs
@@ -650,7 +650,7 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
                     "建议按页分批拍、分批做。"
                 )
 
-    # ---- 清晰度：三条路线的判断不一样 ----
+    # ---- 制作方式：三条路线的判断不一样 ----
     fidelity = answers.get("fidelity") or "bitmap"
     if fidelity == "vector":
         if facts["kind"] == "pdf" and facts["text_layer"] == "ok":
@@ -1053,7 +1053,7 @@ def render_md(res: dict) -> str:
         _clarity = f"矢量重排（agent 逐题转写，{_t['vector']}）"
     else:
         _clarity = f"位图裁切（{_t['bitmap']}）"
-    md.append(f"- 清晰度：{_clarity}"
+    md.append(f"- 制作方式：{_clarity}"
               f"{'，渲染 400dpi' if cfg['paper']['dpi'] >= 400 else ''}")
     heard = res.get("heard") or {}
     if heard:
