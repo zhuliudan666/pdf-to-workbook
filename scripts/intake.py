@@ -681,6 +681,19 @@ def decide(facts: dict, answers: dict | None = None, has_input: bool | None = No
             "（有缓存，重跑只处理新增页）。" + extra + "先跑 try3 能省掉一次白等。"
         )
 
+    # 扫描件的目录常常是图片，detect_toc_chapters 读不到（它只认文字层）。
+    # 合订卷不写 chapters 会每套从 1 重排、被判重号删掉一半题，
+    # 所以这里明说该跑哪个工具，而不是等结构校验报一片高危再让人猜。
+    if (facts["kind"] == "pdf" and facts["text_layer"] in ("none", "ocr")
+            and not res.get("toc")
+            and (facts.get("cls") or {}).get("type") == "exam-paper"):
+        res["warnings"].append(
+            "扫描件的目录是图片，读不出分册页段。如果这是几套卷 / 几年真题合订，"
+            "先跑 `python scripts/split_volumes.py 书.pdf --out 书_分册.pdf "
+            "--patch 输出目录/intake.yaml`（按卷标题拆页并写好 chapters）；"
+            "不拆的话每套题号从 1 重排，会被判重号删掉一半。"
+        )
+
     if facts["kind"] == "image" and facts.get("a4_ratio_off", 0) > 0.18:
         res["warnings"].append(
             f"这张图的宽高比是 {facts['pixels'][0]}×{facts['pixels'][1]}，不像单页 A4。"

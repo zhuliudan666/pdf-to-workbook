@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import pymupdf
 
 import common
+import expect
 
 PART_RE = re.compile(r"^第\s*[一二三四五六七八九十]+\s*部分")
 CHAP_RE = re.compile(r"^(\d+)\s*[.．]\s*\S")
@@ -88,28 +89,31 @@ def _toc_pages(doc) -> list[int]:
 def _toc_entries(pg) -> list[tuple[str, int]]:
     """从目录页上读出 (标题, 页码)。
 
-    标题和页码是两列，靠 y 对齐配对；页码列是纯数字，标题列带「N.」。
-    用「最近的纯数字行」配对，比按行顺序数更抗 OCR/排版抖动。
+    以「纯数字行」当锚，找同一 y（±4pt）的非数字行当标题。
+    以前用 CHAP_RE = ^(\\d+)[.．] 筛标题，「第一套试题」「真题精选卷」这类
+    纯文字章名一条都读不到 —— 目录页码这道闸空跑，日志却照样打印「验收通过」。
+    靠 y 对齐配对不挑章名的写法，比按行顺序数也更抗排版抖动。
     """
-    labels, nums = [], []
+    rows: list[tuple[float, str]] = []
     for b in pg.get_text("dict")["blocks"]:
         if b["type"] != 0:
             continue
         for line in b["lines"]:
             s = _clean("".join(sp["text"] for sp in line["spans"]))
-            if not s or line["bbox"][1] < 100:
+            if not s:
                 continue
-            if NUM_RE.match(s):
-                nums.append((line["bbox"][1], int(s)))
-            elif CHAP_RE.match(s) or PART_RE.match(s):
-                labels.append((line["bbox"][1], s))
+            y = line["bbox"][1]
+            if y < 100 or y > pg.rect.height - 60:   # 页眉 / 页脚不是目录条目
+                continue
+            rows.append((y, s))
     out = []
-    for y, s in labels:
-        if not nums:
-            break
-        ny, page = min(nums, key=lambda n: abs(n[0] - y))
-        if abs(ny - y) <= 4:
-            out.append((s, page))
+    for ny, s in rows:
+        if not NUM_RE.match(s):
+            continue
+        cands = [(abs(y - ny), t) for y, t in rows
+                 if not NUM_RE.match(t) and abs(y - ny) <= 4]
+        if cands:
+            out.append((min(cands)[1], int(s)))
     return out
 
 
@@ -123,6 +127,9 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> d
 
     problems: list[dict] = []
     info: list[str] = []
+    # 「通过」不等于「都查过」。每一道闸没覆盖到的地方必须留痕，
+    # 否则目录条目读不出来这种事会静默变成一句「验收通过」。
+    warnings: list[str] = []
 
     # ---- 1. 页眉书名 ----
     head_x1 = m["margin_left"] + 320
@@ -172,11 +179,11 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> d
                              "pages": []})
             continue
         first = _body_first(doc[page - 1])
-        if PART_RE.match(label):
-            ok = label.replace(" ", "") in first.replace(" ", "")
-        else:
-            no = CHAP_RE.match(label)
-            ok = bool(no) and first.startswith(no.group(1) + ".")
+        key = label.replace(" ", "").replace("\u3000", "")
+        head = first.replace(" ", "").replace("\u3000", "")
+        # 章名可以带编号（「1. 函数」），也可以是纯文字（「第一套试题」）。
+        # 只要目录标题和正文首行互相包含就算对上，不再要求「N.」开头。
+        ok = len(key) >= 2 and (key in head or head in key)
         checked += 1
         if not ok:
             problems.append({"kind": "toc", "detail":
@@ -185,6 +192,9 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> d
     if entries:
         info.append("目录：%d 条，逐条对过正文（%d 条正常）" % (len(entries), checked - len(
             [p for p in problems if p["kind"] == "toc"])))
+    elif toc_pages:
+        warnings.append("找到 %d 页目录，却一条条目都没读出来——目录页码这道闸没跑"
+                        % len(toc_pages))
 
     # ---- 4/5. 版面度量 ----
     hist, gaps, over, tails = Counter(), [], [], []
@@ -228,6 +238,8 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> d
                              "%d 处答题区低于本档目标（最窄 p%d %s %.0fmm，目标 %.0fmm）"
                              % (len(thin), thin[0][0], thin[0][1], thin[0][2], thin[0][3]),
                              "pages": sorted({p for p, *_ in thin})[:12]})
+    else:
+        warnings.append("答题区闸未跑：找不到 layout.json")
     gaps_sorted = sorted(gaps)
     tails_sorted = sorted(tails)
 
@@ -238,13 +250,20 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> d
     # 而前面五条检查全是绿的。所以这里分两步定性：裁切时有没有存文字层，
     # 存了有没有真的印到成品上。
     qfile = Path(out_dir) / "questions.json" if out_dir else None
-    if cfg.get("text_layer", True) and qfile is not None and qfile.exists():
+    qs: list[dict] = []
+    with_text: list[dict] = []
+    if qfile is not None and qfile.exists():
         try:
             qs = json.loads(qfile.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
-            qs = []
+            warnings.append("questions.json 读坏了，题数对账与文字层闸都没跑")
+    else:
+        warnings.append("找不到 questions.json——题数对账与文字层闸都没跑")
+    if cfg.get("text_layer", True):
         with_text = [q for q in qs if q.get("texts")]
-        if not with_text:
+        if not qs:
+            warnings.append("文字层闸未跑：题库是空的")
+        elif not with_text:
             problems.append({"kind": "text_layer_missing", "detail":
                              "%d 题里没有一条文字层记录，成品将搜不到题干" % len(qs),
                              "pages": []})
@@ -270,6 +289,38 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> d
                 info.append("文字层：%d/%d 题有记录，抽查 %d 条%s"
                             % (len(with_text), len(qs), len(probes),
                                "搜到了" if found else "（无可测样本）"))
+    else:
+        info.append("文字层：配置里关掉了（text_layer: false）")
+
+    # ---- 7. 期望题数对账：这本书「应该」有几道题 ----
+    # 六条闸问的都是「做出来的像不像」，没有一条问「有没有少做一半」。
+    # 4 套 × 22 题的合订卷只切出 40 题时，每张图都完整、结构校验只报几处跳号，
+    # 照样一路绿到交付。期望值从原书题型标题「1～10 小题 … 17～22 小题」推出，
+    # 乘以 chapters 里的分册数；认不出就报「未覆盖」，绝不静默通过。
+    spec: dict = {"covered": False, "reason": "structural.json 里没有期望题数"}
+    sfile = Path(out_dir) / "structural.json" if out_dir else None
+    if sfile is not None and sfile.exists():
+        try:
+            spec = json.loads(sfile.read_text(encoding="utf-8")).get("expected") or spec
+        except Exception:  # noqa: BLE001
+            pass
+    if not spec.get("covered"):
+        pfile = Path(out_dir) / "probe.json" if out_dir else None
+        pdf_src, layer = None, "auto"
+        if pfile is not None and pfile.exists():
+            try:
+                pr = json.loads(pfile.read_text(encoding="utf-8"))
+                pdf_src, layer = pr.get("pdf"), pr.get("text_layer", "auto")
+            except Exception:  # noqa: BLE001
+                pass
+        spec = expect.scan(pdf_src, Path(out_dir) if out_dir else Path(pdf).parent, cfg, layer)
+    qprob, qwarn, qinfo = expect.check(len(qs), spec)
+    if qprob:
+        problems.append({"kind": qprob["kind"], "detail": qprob["detail"], "pages": []})
+    if qwarn:
+        warnings.append(qwarn)
+    if qinfo:
+        info.append(qinfo)
 
     def med(v):
         return v[len(v) // 2] if v else 0.0
@@ -288,7 +339,12 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> d
     report = {"pdf": str(pdf), "pages": doc.page_count, "ok": ok,
               "book": names.most_common(1)[0][0] if names else "",
               "part_pages": [p for p, _, _ in parts],
-              "toc_entries": len(entries), "problems": problems, "info": info}
+              "toc_entries": len(entries), "problems": problems, "info": info,
+              "warnings": warnings, "expected": spec,
+              "checks": {"header_pages": len(heads), "part_pages": len(parts),
+                         "toc_pages": len(toc_pages), "toc_entries": len(entries),
+                         "questions": len(qs), "text_layer": len(with_text),
+                         "answer_gap_log": bool(lay is not None and lay.exists())}}
     out = Path(out_dir) if out_dir else Path(pdf).parent
     (out / "accept.json").write_text(json.dumps(report, ensure_ascii=False, indent=2),
                                      encoding="utf-8")
@@ -302,7 +358,11 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None) -> d
                                      ("p" + ", p".join(map(str, p["pages"]))) if p["pages"] else ""))
         print("\n这些错误 layout 自己不会报——它只知道画了什么，不知道画出来像不像这本书。")
     else:
-        print("\n验收通过：页眉、章节页、目录页码、版面留白都对得上。")
+        print("\n验收通过：页眉、章节页、目录页码、版面留白、题数都对得上。")
+    if warnings:
+        print("\n⚠ %d 项闸没覆盖到（通过 ≠ 查过）：" % len(warnings))
+        for w in warnings:
+            print("   - " + w)
     return report
 
 

@@ -199,6 +199,20 @@ cd /path/to/pdf-to-workbook && SKILL="$PWD" && PY=python
 > 同类第二本开始，多数能一轮到底。`profiles/` 里目前 `handout`（讲义课后题）标着
 > `verified: false`，第一次拿真讲义进来要格外看一眼校对单。
 
+## 和纯脚本的区别
+
+切题、裁图、拼版本身都是确定性脚本。这套流程额外做了四件脚本自己不会做的事：
+
+| 环节 | 补了什么 |
+| --- | --- |
+| 认门 | 目录是图片、卷次交界挤在同一页时，`split_volumes.py` 按卷标题拆页并写好分册；认不出就停，不猜 |
+| 验收 | 从原书题型标题推「应有题数」并与实际题数对账——只切出 40 题不会一路绿到交付 |
+| 验收 | `accept.json` 的 `warnings` 报告「哪几道闸没查到」，不再拿一句「验收通过」粉饰空跑 |
+| 交付 | `制作说明.md` 随成品写清判断、默认、没验到的项，换台机器也能复盘 |
+
+刻意没往里加生成式能力：矢量重排那条路已经证明「让模型逐题转写」会带来
+「识别错了却看起来完全正常」的失败。这里的改进是让脚本能报告自己的盲区。
+
 ## 适合什么素材
 
 | 素材 | 怎么描述它 | 实测成品 |
@@ -222,7 +236,7 @@ cd /path/to/pdf-to-workbook && SKILL="$PWD" && PY=python
 | `references/user-guide.md` | 用户手册：三步命令、能不能做、档位、qa.csv 怎么读、症状表 |
 | `references/transcribe-prompt.md` | 矢量重排路线的转写提示词 |
 | `references/example-items.json` | 矢量重排的输入格式样例（4 道题，含 `uncertain` 字段怎么写） |
-| `scripts/` | 流水线：intake → probe → 切题 → 裁图 → 质检 → 校对单 → 拼版 → 验收 |
+| `scripts/` | 流水线：intake → probe → 切题 → 裁图 → 质检 → 校对单 → 拼版 → 验收；另有 `split_volumes.py`（合订卷拆页）、`expect.py`（期望题数）、`report.py`（生成制作说明） |
 | `profiles/` | 6 类素材预案，命中后自动套配置 |
 | `tools/` | 沉淀预案（learn）、清理中途产物（clean）、PDF 转图（render_preview） |
 | `assets/preview.png` | README 顶部那张成品图 |

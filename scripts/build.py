@@ -7,10 +7,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import accept
+import common
 import crop
+import expect
 import layout
 import probe
 import qa
+import report as report_mod   # 别叫 report：下面那个变量也叫 report（体检结果）
 import review
 import segment
 import segment_ocr
@@ -64,9 +67,21 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None, out_
     # 结构校验放在校对单前面：题号断了比切点切歪严重得多，而缩略图看不出来
     print("\n== 5/8 结构校验 ==")
     struct = structural.check(questions, report.get("pages"))
+    # 「题号连不连得上」之外，还要问「这本书应该有几道题」。
+    # 少切一整节的书，每张图都完整，只有这个数能当场把它拦下来。
+    spec = expect.scan(report.get("pdf"), out, common.load_config(cfg_path),
+                       report.get("text_layer", "auto"))
+    struct["expected"] = spec
+    qprob, qwarn, qinfo = expect.check(len(questions), spec)
+    if qprob:
+        struct["problems"].append(qprob)
     (out / "structural.json").write_text(
         json.dumps(struct, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    if qinfo:
+        print("  " + qinfo)
+    if qwarn:
+        print("  ⚠ " + qwarn)
     highs = [p for p in struct["problems"] if p["severity"] == "high"]
     if highs:
         print(f"!! 发现 {len(highs)} 处高危：")
@@ -85,6 +100,9 @@ def main(pdf: str, cfg_path: str | None = None, out_dir: str | None = None, out_
     # 在它眼里都是「正常执行完毕」——必须把成品读回来再看一遍。
     print("\n== 8/8 验收 ==")
     acc = accept.main(target, cfg_path, str(out))
+
+    # 判断、默认值、没验到的地方随成品落盘；否则这些只活在聊天里，换台机器就没了。
+    report_mod.main(target, cfg_path, str(out))
     print(f"\n完成：{target}")
     if not acc["ok"]:
         print("（验收有硬伤，先修再交付：%d 项）" % len(acc["problems"]))
