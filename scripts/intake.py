@@ -361,27 +361,33 @@ def _q(qid: str, ask: str, options: list[dict], default, why: str, blocking=True
 def estimate_times(facts: dict) -> dict:
     """给「用哪种方式制作」卡片估两条路的工作时间，并把依据一起交出去。
 
-    位图：扫描件 = 条带 OCR ~2.6s/页 + 文字层整页 OCR ~2.7s/页 + 构建；
-          文本层 PDF 不跑 OCR，接近零成本。
-    矢量：题数 × 30–60 秒（读图 + 转写 + 核对）。认门阶段扫描件还没有题数，
-          按每页 5 题粗估，并把「粗估」写进卡片——不让人把估的当成量过的。
+    口径是**从上传到拿到成品的整轮时间**，不是脚本执行时间：脚本只是零头，
+    大头在 agent 读日志、看校对单、回执确认，以及切点不对时的一轮返工
+    （SKILL.md 实测「一次构建 3.6 秒，一轮改→看却要 5–10 分钟」）。
+    早期版本只算 OCR 秒数，4 页的书报「约 1 分钟」，实测远不止，会误导人。
+
+    位图：5–10 分钟判读基数 + 扫描件两遍 OCR（2.6 + 2.7 秒/页）。
+    矢量：题数 × 30–60 秒（读图 + 转写 + 核对）+ 排版 / 校对 / 回执基数。
+    扫描件认门时还没切题，题数按每页 5 题粗估，并把「粗估」写进卡片。
     """
     pages = max(1, int(facts.get("pages") or 1))
-    if facts.get("text_layer") != "ok":
-        bitmap_min = max(1, math.ceil((pages * (2.6 + 2.7) + 10) / 60))
-        bitmap_basis = f"按 {pages} 页扫描件两遍 OCR 估"
-    else:
-        bitmap_min = 1
-        bitmap_basis = "有文字层，不用跑 OCR"
+    scanned = facts.get("text_layer") != "ok"
+    ocr_min = max(1, math.ceil(pages * (2.6 + 2.7) / 60)) if scanned else 0
+    blo, bhi = 5 + ocr_min, 10 + ocr_min
+    bitmap_basis = (f"按 {pages} 页扫描件两遍 OCR 估，"
+                    "再加 agent 判读、校对单核对与可能的重跑") if scanned else \
+                   "有文字层，不用跑 OCR；整轮含 agent 判读与回执确认"
+
     n = facts.get("est_questions")
     guessed = not bool(n)
     n = int(n) if n else pages * 5
-    lo, hi = round(n * 30 / 60), round(n * 60 / 60)
-    vector_txt = (f"约 {lo}–{hi} 分钟" if hi < 90
-                  else f"约 {lo / 60:.1f}–{hi / 60:.1f} 小时")
+    vlo = round(n * 30 / 60) + 5
+    vhi = round(n * 60 / 60) + 10
+    vector_txt = (f"约 {vlo}–{vhi} 分钟" if vhi < 90
+                  else f"约 {vlo / 60:.1f}–{vhi / 60:.1f} 小时")
     vector_basis = (f"按 {n} 题" + ("（每页约 5 题粗估）" if guessed else "")
-                    + " × 30–60 秒/题，含逐题核对")
-    return {"bitmap": f"约 {bitmap_min} 分钟", "bitmap_basis": bitmap_basis,
+                    + " × 30–60 秒/题，含逐题转写、核对、排版与校对；长任务还可能返工")
+    return {"bitmap": f"约 {blo}–{bhi} 分钟", "bitmap_basis": bitmap_basis,
             "vector": vector_txt, "vector_basis": vector_basis}
 
 
@@ -463,7 +469,7 @@ def questions_for(facts: dict) -> list[dict]:
             "用哪种方式制作？",
             [
                 {"key": "bitmap", "label": f"位图裁切（默认 · {t['bitmap']}）",
-                 "effect": f"把原书每道题裁成图、不重排，全自动；{t['bitmap_basis']}。"
+                 "effect": f"把原书每道题裁成图、不重排，脚本全程自动跑；{t['bitmap_basis']}。"
                            f"按 {dpi}dpi 打印会有点发虚，但能读"},
                 {"key": "vector", "label": f"矢量重排（{t['vector']}）",
                  "effect": f"逐题转写成文字重新排版，版式会变、印刷级清晰；{t['vector_basis']}。"
@@ -471,7 +477,9 @@ def questions_for(facts: dict) -> list[dict]:
             ],
             "bitmap",
             f"这份输入只有约 {dpi}dpi：位图是「把原书裁成图」，矢量是「逐题转写重排成文字」，"
-            "两种做法差一个数量级（上面的时间是粗估，实际题数以切出来的为准），必须你定",
+            "两条路的做法和耗时差得很远，必须你定。"
+            "上面的时间是从上传到交付的整轮粗估（含判读、校对和可能的重跑），"
+            "**不是脚本执行时间**；机器快慢、是否命中 OCR 缓存都会变",
         ))
 
     return qs

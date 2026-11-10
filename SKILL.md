@@ -816,7 +816,10 @@ chars_per_page / hits_per_page / images_per_page / num_chaptered_ratio / answer_
 4. `python scripts/reflow.py items.json -o 做题本_矢量.pdf`，打开自动生成的校对单，
    红框逐题对照原图核。这一遍省不掉。
 
-卡片时间是粗估，实际以 `items.json` 的条数为准。有文本层的 PDF 或 ≥240dpi 扫描件
+卡片时间是**整轮粗估**（从上传到交付，含 agent 判读、校对单核对和可能的重跑，
+不是脚本执行时间）；早期版本只算 OCR 秒数，4 页的书报「约 1 分钟」，实测远不止，已改成
+「判读基数 5–10 分钟 + 两遍 OCR」的区间。实际题数以 `items.json` 的条数为准。
+有文本层的 PDF 或 ≥240dpi 扫描件
 会被拦回位图（前者把 dpi 提到 400）——源头本来就是矢量，转写只会引入识别错误。
 
 **通用 OCR 为什么不行**（实测，一张 9 题的考研数学页）：
