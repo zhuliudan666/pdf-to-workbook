@@ -82,8 +82,7 @@ python -c "import cv2, rapidocr_onnxruntime; print('扫描件路线：依赖齐�
 - **WorkBuddy / Claude Code**：直接说「把这本书做成做题本」；加载成功时它回「收到，技能已加载完成…」并请你传文件
 - **没出现**：九成是目录多套了一层，检查有没有 `skills/pdf-to-workbook/pdf-to-workbook/SKILL.md` 这种结构
 
-> 本仓库是私有的，克隆前要先登录 GitHub（`gh auth login`，或用 GitHub Desktop 打开一次）。
-> 想让别人免登录安装，把仓库可见性改成 public。
+> 本仓库已公开（public），任何人可直接 `git clone`，无需登录或配置凭据。
 
 ### 5. 也可以让 agent 自己装
 
@@ -104,8 +103,7 @@ https://github.com/zhuliudan666/pdf-to-workbook
 
 它做完这四步就等于装好了。要是它只 clone 了没装依赖，你补一句「把 requirements.txt 装上」即可。
 
-> 前提是本仓库对它有读权限：私有仓库需要它手上已经有你的 GitHub 凭据
-> （桌面端登录过、或 `gh auth login` 过）。都没有的话，把仓库改成 public 最省事。
+> 仓库已公开，agent 直接用上面的 URL 克隆即可，不需要 GitHub 凭据。
 
 ## 怎么用
 
